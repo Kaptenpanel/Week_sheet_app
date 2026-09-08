@@ -41,7 +41,25 @@ All shortcuts also available from the menu bar icon.
 - Swift 5.9+
 - Zero external dependencies
 
-## Build & Run
+## Install as App (recommended)
+
+Build a standalone `.app` bundle that runs without a terminal:
+
+```bash
+./build-app.sh
+```
+
+This installs `WeekSheet.app` to `~/Applications`. Open it from Finder or:
+
+```bash
+open ~/Applications/WeekSheet.app
+```
+
+Use the **Launch at Login** toggle in the menu bar icon to start automatically at boot.
+
+## Build & Run (development)
+
+For development, you can run directly from source:
 
 ```bash
 swift build
