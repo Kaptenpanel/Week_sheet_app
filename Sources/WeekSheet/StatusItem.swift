@@ -34,6 +34,26 @@ public final class StatusItem {
         editItem.keyEquivalent = " "
         menu.addItem(editItem)
 
+        let visibilityItem = NSMenuItem(
+            title: windowController.isSheetHidden ? "Show Sheet" : "Hide Sheet",
+            action: #selector(toggleVisibilityFromMenu),
+            keyEquivalent: ""
+        )
+        visibilityItem.target = self
+        visibilityItem.keyEquivalentModifierMask = [.control, .option]
+        visibilityItem.keyEquivalent = "m"
+        menu.addItem(visibilityItem)
+
+        let layoutItem = NSMenuItem(
+            title: UserDefaults.standard.bool(forKey: "horizontalMode") ? "Vertical Layout" : "Horizontal Layout",
+            action: #selector(toggleLayoutFromMenu),
+            keyEquivalent: ""
+        )
+        layoutItem.target = self
+        layoutItem.keyEquivalentModifierMask = [.control, .option]
+        layoutItem.keyEquivalent = "."
+        menu.addItem(layoutItem)
+
         menu.addItem(.separator())
 
         let loginItem = NSMenuItem(
@@ -55,6 +75,16 @@ public final class StatusItem {
         menu.addItem(quitItem)
 
         return menu
+    }
+
+    @objc private func toggleVisibilityFromMenu() {
+        windowController.toggleVisibility()
+        statusItem.menu = buildMenu()
+    }
+
+    @objc private func toggleLayoutFromMenu() {
+        windowController.toggleLayoutMode()
+        statusItem.menu = buildMenu()
     }
 
     @objc private func toggleLaunchAtLogin() {

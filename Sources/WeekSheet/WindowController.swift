@@ -10,16 +10,20 @@ private class SheetWindow: NSWindow {
 public final class WindowController: NSObject {
     private let window: NSWindow
     private let viewModel: SheetViewModel
-    private var hotKeyRef: EventHotKeyRef?
+    private var editHotKeyRef: EventHotKeyRef?
+    private var visibilityHotKeyRef: EventHotKeyRef?
+    private var layoutHotKeyRef: EventHotKeyRef?
     private var globalClickMonitor: Any?
     private var cancellables = Set<AnyCancellable>()
+    private(set) var isSheetHidden = false
 
     public init(store: FileStore) {
         self.viewModel = SheetViewModel(store: store)
 
         let screen = NSScreen.main ?? NSScreen.screens[0]
         let width = screen.frame.width * 0.6
-        let height = width * (9.0 / 16.0)
+        let isHorizontal = UserDefaults.standard.bool(forKey: "horizontalMode")
+        let height = isHorizontal ? width * (4.0 / 5.0) : width * (9.0 / 16.0)
         let x = (screen.frame.width - width) / 2
         let y = (screen.frame.height - height) / 2
         let frame = NSRect(x: x, y: y, width: width, height: height)
@@ -88,14 +92,44 @@ public final class WindowController: NSObject {
     }
 
     deinit {
-        if let ref = hotKeyRef { UnregisterEventHotKey(ref) }
+        if let ref = editHotKeyRef { UnregisterEventHotKey(ref) }
+        if let ref = visibilityHotKeyRef { UnregisterEventHotKey(ref) }
+        if let ref = layoutHotKeyRef { UnregisterEventHotKey(ref) }
         if let m = globalClickMonitor { NSEvent.removeMonitor(m) }
     }
 
     // MARK: - Edit mode
 
     @objc public func toggleEditMode() {
+        guard !isSheetHidden else { return }
         viewModel.isEditMode.toggle()
+    }
+
+    @objc public func toggleVisibility() {
+        if isSheetHidden {
+            isSheetHidden = false
+            applyBackgroundMode()
+            window.orderFront(nil)
+        } else {
+            if viewModel.isEditMode { viewModel.isEditMode = false }
+            window.orderOut(nil)
+            isSheetHidden = true
+        }
+    }
+
+    @objc public func toggleLayoutMode() {
+        viewModel.toggleLayoutMode()
+        let screen = NSScreen.main ?? NSScreen.screens[0]
+        let width = window.frame.width
+        let height: CGFloat
+        if viewModel.isHorizontalMode {
+            height = width * (4.0 / 5.0)
+        } else {
+            height = width * (9.0 / 16.0)
+        }
+        let y = window.frame.midY - height / 2
+        let newFrame = NSRect(x: window.frame.origin.x, y: max(y, screen.visibleFrame.minY), width: width, height: height)
+        window.setFrame(newFrame, display: true, animate: true)
     }
 
     private func enterEditMode() {
@@ -124,10 +158,11 @@ public final class WindowController: NSObject {
         if viewModel.isEditMode { viewModel.isEditMode = false }
     }
 
-    // MARK: - Hotkey (⌃⌥Space)
+    // MARK: - Hotkeys
 
     private func registerHotKey() {
-        let hotKeyID = EventHotKeyID(signature: fourCharCode("WSHT"), id: 1)
+        let sig = fourCharCode("WSHT")
+        let modifiers = UInt32(controlKey | optionKey)
         var eventType = EventTypeSpec(
             eventClass: OSType(kEventClassKeyboard),
             eventKind: UInt32(kEventHotKeyPressed)
@@ -144,12 +179,24 @@ public final class WindowController: NSObject {
         )
 
         RegisterEventHotKey(
-            UInt32(kVK_Space),
-            UInt32(controlKey | optionKey),
-            hotKeyID,
-            GetApplicationEventTarget(),
-            0,
-            &hotKeyRef
+            UInt32(kVK_Space), modifiers,
+            EventHotKeyID(signature: sig, id: 1),
+            GetApplicationEventTarget(), 0,
+            &editHotKeyRef
+        )
+
+        RegisterEventHotKey(
+            UInt32(kVK_ANSI_M), modifiers,
+            EventHotKeyID(signature: sig, id: 2),
+            GetApplicationEventTarget(), 0,
+            &visibilityHotKeyRef
+        )
+
+        RegisterEventHotKey(
+            UInt32(kVK_ANSI_Period), modifiers,
+            EventHotKeyID(signature: sig, id: 3),
+            GetApplicationEventTarget(), 0,
+            &layoutHotKeyRef
         )
     }
 }
@@ -159,9 +206,26 @@ private func hotKeyHandler(
     _ event: EventRef?,
     _ userData: UnsafeMutableRawPointer?
 ) -> OSStatus {
-    guard let userData else { return OSStatus(eventNotHandledErr) }
+    guard let userData, let event else { return noErr }
+    var hotKeyID = EventHotKeyID()
+    GetEventParameter(
+        event,
+        UInt32(kEventParamDirectObject),
+        UInt32(typeEventHotKeyID),
+        nil,
+        MemoryLayout<EventHotKeyID>.size,
+        nil,
+        &hotKeyID
+    )
     let controller = Unmanaged<WindowController>.fromOpaque(userData).takeUnretainedValue()
-    DispatchQueue.main.async { controller.toggleEditMode() }
+    DispatchQueue.main.async {
+        switch hotKeyID.id {
+        case 1: controller.toggleEditMode()
+        case 2: controller.toggleVisibility()
+        case 3: controller.toggleLayoutMode()
+        default: break
+        }
+    }
     return noErr
 }
 

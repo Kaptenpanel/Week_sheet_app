@@ -39,6 +39,7 @@ public final class SheetViewModel: ObservableObject {
     @Published var editingNotes = false
     @Published private(set) var undoState: UndoInfo?
     @Published var shakingDay: Day?
+    @Published var isHorizontalMode: Bool
 
     let store: FileStore
     private var eventMonitor: Any?
@@ -49,6 +50,7 @@ public final class SheetViewModel: ObservableObject {
 
     public init(store: FileStore) {
         self.store = store
+        self.isHorizontalMode = UserDefaults.standard.bool(forKey: "horizontalMode")
         self.week = (try? store.loadAndResetIfNeeded()) ?? Week.empty(weekStart: Week.mondayOfWeek(containing: Date()))
         resetTimer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
             self?.checkReset()
@@ -196,6 +198,11 @@ public final class SheetViewModel: ObservableObject {
 
     func cancelEditing() { editingID = nil; addingDay = nil; addingIdea = false; editingReminder = false; editingNotes = false; selectedID = nil }
 
+    func toggleLayoutMode() {
+        isHorizontalMode.toggle()
+        UserDefaults.standard.set(isHorizontalMode, forKey: "horizontalMode")
+    }
+
     // MARK: Key handler
 
     func installKeyHandler() {
@@ -331,13 +338,26 @@ public struct SheetView: View {
             Rectangle().fill(marginLine).frame(width: 1).padding(.leading, 22)
                 .allowsHitTesting(false)
 
-            VStack(spacing: 0) {
-                header.padding(.bottom, 16)
-                dayColumns.padding(.bottom, 16)
-                bottom.padding(.bottom, 12)
-                footer
+            if viewModel.isHorizontalMode {
+                VStack(spacing: 0) {
+                    header.padding(.bottom, 16)
+                    HStack(alignment: .top, spacing: 16) {
+                        dayRows
+                        sidebar.frame(width: 280)
+                    }
+                    .padding(.bottom, 12)
+                    horizontalFooter
+                }
+                .padding(24)
+            } else {
+                VStack(spacing: 0) {
+                    header.padding(.bottom, 16)
+                    dayColumns.padding(.bottom, 16)
+                    bottom.padding(.bottom, 12)
+                    footer
+                }
+                .padding(24)
             }
-            .padding(24)
         }
         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         .overlay(alignment: .bottom) {
@@ -601,6 +621,117 @@ public struct SheetView: View {
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .topLeading)
         .background(coolPanel).cornerRadius(4)
+    }
+
+    // MARK: Horizontal layout
+
+    private var dayRows: some View {
+        VStack(spacing: 0) {
+            ForEach(Day.allCases, id: \.self) { day in
+                dayRow(day)
+            }
+        }
+        .frame(maxWidth: .infinity)
+    }
+
+    @ViewBuilder
+    private func dayRow(_ day: Day) -> some View {
+        let items = viewModel.week.days[day, default: []]
+        let isToday = (day == todayDay)
+        let isShaking = viewModel.shakingDay == day
+
+        HStack(alignment: .top, spacing: 0) {
+            Rectangle().fill(isToday ? todayBar : Color.clear).frame(width: 2)
+
+            VStack(alignment: .leading, spacing: 0) {
+                Text(day.rawValue.uppercased()).font(headerFont)
+                Text(horizontalDateLabel(day)).font(smallMono)
+            }
+            .foregroundColor(isToday ? todayGreen : .black.opacity(0.65))
+            .frame(width: 70, alignment: .leading)
+            .padding(.vertical, 8).padding(.leading, 8)
+            .background(isShaking ? Color.red.opacity(0.12) : Color.clear)
+            .cornerRadius(3)
+
+            VStack(alignment: .leading, spacing: 0) {
+                ForEach(0..<3, id: \.self) { i in
+                    VStack(alignment: .leading, spacing: 0) {
+                        if i < items.count {
+                            if viewModel.editingID == items[i].id {
+                                InlineTextField(
+                                    text: items[i].text,
+                                    onCommit: { viewModel.updateText(items[i].id, newText: $0) },
+                                    onCancel: { viewModel.editingID = nil }
+                                ).frame(height: 28)
+                            } else {
+                                itemSlot(items[i])
+                            }
+                        } else if viewModel.addingDay == day && i == items.count {
+                            InlineTextField(
+                                text: "",
+                                onCommit: { viewModel.addItem(to: day, text: $0) },
+                                onCancel: { viewModel.addingDay = nil }
+                            ).frame(height: 28)
+                        } else {
+                            Rectangle().fill(Color.clear).frame(height: 28)
+                                .contentShape(Rectangle())
+                                .onTapGesture { viewModel.startAddingToDay(day) }
+                        }
+                        Rectangle().fill(ruleColor).frame(height: 1)
+                    }
+                    .onDrop(of: [.text], isTargeted: nil) { providers in
+                        handleDrop(providers, to: day, at: i)
+                    }
+                }
+            }
+            .padding(.horizontal, 8)
+            .frame(maxWidth: .infinity)
+        }
+        .background(isToday ? todayTint : Color.clear)
+        .modifier(ShakeEffect(shaking: isShaking))
+    }
+
+    private var sidebar: some View {
+        VStack(spacing: 12) {
+            ideasPanel
+            notesPanel
+            reminderPanel
+        }
+    }
+
+    private var horizontalFooter: some View {
+        HStack {
+            Text("DRAG TO MOVE \u{00B7} SPACE = DONE \u{00B7} \u{232B} = DELETE \u{00B7} ESC = LEAVE")
+            Spacer()
+            Text("3/DAY \u{00B7} RESETS MON 04:00")
+        }
+        .font(captionMono).foregroundColor(footerDim)
+    }
+
+    private func horizontalDateLabel(_ day: Day) -> String {
+        guard let s = weekStartDate else { return "" }
+        let cal = Calendar.current
+        let mf = DateFormatter()
+        mf.locale = Locale(identifier: "en_US_POSIX")
+        mf.dateFormat = "d MMM"
+        if day == .wknd {
+            let sat = cal.date(byAdding: .day, value: 5, to: s)!
+            let sun = cal.date(byAdding: .day, value: 6, to: s)!
+            let df = DateFormatter()
+            df.locale = Locale(identifier: "en_US_POSIX")
+            df.dateFormat = "d"
+            let monthF = DateFormatter()
+            monthF.locale = Locale(identifier: "en_US_POSIX")
+            monthF.dateFormat = "MMM"
+            return "\(df.string(from: sat))-\(df.string(from: sun)) \(monthF.string(from: sat).uppercased())"
+        }
+        let off: Int
+        switch day {
+        case .mon: off = 0; case .tue: off = 1; case .wed: off = 2
+        case .thu: off = 3; case .fri: off = 4; default: off = 0
+        }
+        let date = cal.date(byAdding: .day, value: off, to: s)!
+        return mf.string(from: date).uppercased()
     }
 
     // MARK: Footer
