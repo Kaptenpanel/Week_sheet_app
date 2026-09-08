@@ -10,7 +10,16 @@ A macOS desktop widget that replaces the printed weekly planner sheet. It sits o
 - **New Ideas** inbox for undecided items, shown as dashed-border chips
 - **Reminder** (one line) and **Notes** (free text) panels
 - **Weekly reset** every Monday at 04:00 — done items cleared, unfinished items move to New Ideas, previous week archived to history
+- **Two layouts** — vertical (default) and horizontal; switch anytime
 - Lives on the desktop at 85% opacity; press **⌃⌥Space** (or use the menu bar icon) to enter edit mode
+
+## Keyboard Shortcuts
+
+| Shortcut | Action |
+|---|---|
+| **⌃⌥Space** | Toggle edit mode |
+| **⌃⌥M** | Hide / show sheet |
+| **⌃⌥.** | Switch between vertical and horizontal layout |
 
 ## Interactions (edit mode)
 
@@ -23,6 +32,8 @@ A macOS desktop widget that replaces the printed weekly planner sheet. It sits o
 | Delete | Select an item, press ⌫ (2-second undo toast) |
 | Edit text | Double-click an item |
 | Leave edit mode | Press Esc or click outside the sheet |
+
+All shortcuts also available from the menu bar icon.
 
 ## Requirements
 
