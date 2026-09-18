@@ -40,11 +40,14 @@ public final class SheetViewModel: ObservableObject {
     @Published private(set) var undoState: UndoInfo?
     @Published var shakingDay: Day?
     @Published var isHorizontalMode: Bool
+    /// Start of the current day. Published so the sheet redraws when the date rolls over.
+    @Published private(set) var today = Calendar.current.startOfDay(for: Date())
 
     let store: FileStore
     private var eventMonitor: Any?
     private var undoTimer: Timer?
     private var resetTimer: Timer?
+    private var wakeObserver: Any?
 
     struct UndoInfo { let item: Item; let day: Day?; let position: Int }
 
@@ -52,18 +55,37 @@ public final class SheetViewModel: ObservableObject {
         self.store = store
         self.isHorizontalMode = UserDefaults.standard.bool(forKey: "horizontalMode")
         self.week = (try? store.loadAndResetIfNeeded()) ?? Week.empty(weekStart: Week.mondayOfWeek(containing: Date()))
-        resetTimer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
-            self?.checkReset()
+        let timer = Timer(timeInterval: 60, repeats: true) { [weak self] _ in
+            self?.tick()
+        }
+        // .common so the tick still fires while a menu or window drag runs a tracking loop.
+        RunLoop.main.add(timer, forMode: .common)
+        resetTimer = timer
+        // Timers are coalesced across sleep; catch up as soon as the machine wakes.
+        wakeObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didWakeNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.tick()
         }
     }
 
     deinit {
         if let m = eventMonitor { NSEvent.removeMonitor(m) }
+        if let o = wakeObserver { NSWorkspace.shared.notificationCenter.removeObserver(o) }
         undoTimer?.invalidate()
         resetTimer?.invalidate()
     }
 
     private func save() { try? store.save(week) }
+
+    /// Rolls the highlighted day forward at midnight and resets the sheet on Monday.
+    func tick() {
+        let start = Calendar.current.startOfDay(for: Date())
+        if start != today { today = start }
+        checkReset()
+    }
 
     func checkReset() {
         guard week.needsReset() else { return }
@@ -777,7 +799,7 @@ public struct SheetView: View {
 
     private var todayDay: Day? {
         guard let s = weekStartDate else { return nil }
-        let diff = Calendar.current.dateComponents([.day], from: Calendar.current.startOfDay(for: s), to: Calendar.current.startOfDay(for: Date())).day ?? -1
+        let diff = Calendar.current.dateComponents([.day], from: Calendar.current.startOfDay(for: s), to: viewModel.today).day ?? -1
         switch diff {
         case 0: return .mon; case 1: return .tue; case 2: return .wed
         case 3: return .thu; case 4: return .fri; case 5, 6: return .wknd; default: return nil
