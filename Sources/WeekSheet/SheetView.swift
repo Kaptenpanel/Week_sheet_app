@@ -232,6 +232,8 @@ public final class SheetViewModel: ObservableObject {
         eventMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard let self else { return event }
             if self.editingID != nil || self.addingDay != nil || self.addingIdea { return event }
+            // Reminder/Notes get typed keys (incl. Space); Esc still leaves edit mode.
+            if (self.editingReminder || self.editingNotes) && event.keyCode != 53 { return event }
             switch event.keyCode {
             case 49: self.toggleDone(); return nil
             case 51: if let id = self.selectedID { self.deleteItem(id); return nil }; return event

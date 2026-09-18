@@ -108,12 +108,18 @@ public final class WindowController: NSObject {
     @objc public func toggleVisibility() {
         if isSheetHidden {
             isSheetHidden = false
-            applyBackgroundMode()
-            window.orderFront(nil)
+            if viewModel.isEditMode {
+                enterEditMode()
+            } else {
+                applyBackgroundMode()
+                window.orderFront(nil)
+            }
         } else {
-            if viewModel.isEditMode { viewModel.isEditMode = false }
-            window.orderOut(nil)
+            // Edit mode survives hiding; only the key handler is paused.
+            // Set the flag first so windowDidResignKey ignores the orderOut.
             isSheetHidden = true
+            viewModel.removeKeyHandler()
+            window.orderOut(nil)
         }
     }
 
@@ -155,6 +161,7 @@ public final class WindowController: NSObject {
     }
 
     @objc private func windowDidResignKey(_ notification: Notification) {
+        guard !isSheetHidden else { return }
         if viewModel.isEditMode { viewModel.isEditMode = false }
     }
 
