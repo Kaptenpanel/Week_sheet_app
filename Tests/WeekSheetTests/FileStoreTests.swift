@@ -230,4 +230,78 @@ final class FileStoreTests: XCTestCase {
         let historyDir = tmpDir.appendingPathComponent("history")
         XCTAssertFalse(FileManager.default.fileExists(atPath: historyDir.path))
     }
+
+    // MARK: - Migration refusals leave the file intact
+
+    func testLoadSheetLeavesTheFileIntactWhenWeekStartIsUnparseable() throws {
+        let bad = """
+        {
+            "weekStart": "not-a-date",
+            "days": { "mon": [{ "id": "550E8400-E29B-41D4-A716-446655440001", "text": "Precious", "done": false }] },
+            "ideas": [],
+            "reminder": "Keep me"
+        }
+        """.data(using: .utf8)!
+        try writeRawFile(bad)
+
+        XCTAssertThrowsError(try store.loadSheet())
+
+        let after = try Data(contentsOf: tmpDir.appendingPathComponent("week.json"))
+        XCTAssertEqual(after, bad, "a rejected migration must leave week.json byte-identical")
+    }
+
+    func testLoadSheetLeavesTheFileIntactWhenWeekStartIsNotAMonday() throws {
+        // 2026-09-22 is a Tuesday, so fri and wknd would collide.
+        let bad = """
+        {
+            "weekStart": "2026-09-22",
+            "days": { "fri": [{ "id": "550E8400-E29B-41D4-A716-446655440002", "text": "Friday", "done": false }] },
+            "ideas": [],
+            "reminder": ""
+        }
+        """.data(using: .utf8)!
+        try writeRawFile(bad)
+
+        XCTAssertThrowsError(try store.loadSheet())
+
+        let after = try Data(contentsOf: tmpDir.appendingPathComponent("week.json"))
+        XCTAssertEqual(after, bad)
+    }
+
+    func testLoadSheetThrowsOnMalformedJSONWithoutWriting() throws {
+        let garbage = "this is not json at all".data(using: .utf8)!
+        try writeRawFile(garbage)
+
+        XCTAssertThrowsError(try store.loadSheet())
+
+        let after = try Data(contentsOf: tmpDir.appendingPathComponent("week.json"))
+        XCTAssertEqual(after, garbage, "an unreadable file must be left alone, not replaced")
+    }
+
+    func testLoadSheetTreatsAnEmptyObjectAsAnEmptySheetWithoutWriting() throws {
+        let empty = "{}".data(using: .utf8)!
+        try writeRawFile(empty)
+
+        let sheet = try store.loadSheet()
+        XCTAssertTrue(sheet.buckets.isEmpty)
+        XCTAssertTrue(sheet.ideas.isEmpty)
+
+        let after = try Data(contentsOf: tmpDir.appendingPathComponent("week.json"))
+        XCTAssertEqual(after, empty, "reading a new-shape file must not rewrite it")
+    }
+
+    func testLoadSheetAndPruneDoesNotRewriteWhenNothingIsPruned() throws {
+        // Compact and unsorted on purpose: any write would re-encode this prettyPrinted and
+        // sortedKeys, so byte-equality afterwards is what proves no write happened.
+        let compact = """
+        {"ideas":[],"weeklyFocus":{},"buckets":{"2026-09-21":[{"id":"550E8400-E29B-41D4-A716-446655440003","text":"Current","done":false}]}}
+        """.data(using: .utf8)!
+        try writeRawFile(compact)
+
+        let sheet = try store.loadSheetAndPrune(now: Week.parseDate("2026-09-21")!)
+        XCTAssertEqual(sheet.buckets.count, 1, "the bucket is inside the retention window")
+
+        let after = try Data(contentsOf: tmpDir.appendingPathComponent("week.json"))
+        XCTAssertEqual(after, compact, "nothing was pruned, so the file must not be rewritten")
+    }
 }
