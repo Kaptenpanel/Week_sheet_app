@@ -295,49 +295,6 @@ private struct InlineTextField: NSViewRepresentable {
     }
 }
 
-// MARK: - InlineTextEditor (multi-line)
-
-private struct InlineTextEditor: NSViewRepresentable {
-    let text: String
-    let onCommit: (String) -> Void
-
-    func makeNSView(context: Context) -> NSScrollView {
-        let tv = NSTextView()
-        tv.string = text
-        tv.font = .systemFont(ofSize: 12)
-        tv.textColor = .black
-        tv.isRichText = false
-        tv.backgroundColor = .clear
-        tv.isEditable = true
-        tv.isSelectable = true
-        tv.delegate = context.coordinator
-        tv.textContainerInset = NSSize(width: 0, height: 0)
-        tv.textContainer?.widthTracksTextView = true
-
-        let sv = NSScrollView()
-        sv.documentView = tv
-        sv.hasVerticalScroller = false
-        sv.drawsBackground = false
-        sv.borderType = .noBorder
-
-        DispatchQueue.main.async { tv.window?.makeFirstResponder(tv) }
-        return sv
-    }
-
-    func updateNSView(_ nsView: NSScrollView, context: Context) {}
-    func makeCoordinator() -> Coordinator { Coordinator(onCommit: onCommit) }
-
-    class Coordinator: NSObject, NSTextViewDelegate {
-        let onCommit: (String) -> Void
-        init(onCommit: @escaping (String) -> Void) { self.onCommit = onCommit }
-
-        func textDidEndEditing(_ notification: Notification) {
-            guard let tv = notification.object as? NSTextView else { return }
-            onCommit(tv.string)
-        }
-    }
-}
-
 // MARK: - SheetView
 
 public struct SheetView: View {
