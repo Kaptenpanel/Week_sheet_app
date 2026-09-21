@@ -789,4 +789,62 @@ final class SheetTests: XCTestCase {
         XCTAssertEqual(viewModel.window.first?.id, "2026-09-28")
         XCTAssertEqual(BucketKey.containing(viewModel.today), BucketKey("2026-09-28")!)
     }
+
+    // MARK: - Navigation sequences
+
+    func testForwardThenBackReturnsToTheSameWindow() {
+        let anchor = Sheet.parseDate("2026-09-21")!
+        for mode in [WindowMode.week, .sliding] {
+            let start = Sheet.window(anchor: anchor, mode: mode)
+            let forward = Sheet.steppedAnchor(anchor, by: 1, mode: mode)
+            let back = Sheet.steppedAnchor(forward, by: -1, mode: mode)
+            XCTAssertEqual(Sheet.window(anchor: back, mode: mode), start, "\(mode)")
+        }
+    }
+
+    func testForwardNavigationIsNeverClamped() {
+        let now = Sheet.parseDate("2026-09-21")!
+        var anchor = now
+        for _ in 0..<50 { anchor = Sheet.steppedAnchor(anchor, by: 1, mode: .sliding) }
+        XCTAssertEqual(Sheet.window(anchor: anchor, mode: .sliding).count, 6)
+    }
+
+    // `testTickMovesTheWindowWhenTheWeekRollsOver` above already covers "midnight moves the
+    // window when the user has not navigated" -- confirmed still passing with `followsToday` in
+    // place, so it is not duplicated here.
+
+    /// Uses `stepForward()`, not `stepBack()`: the view model's `canStepBack` clamps against the
+    /// real wall clock (`Sheet.canStepBack` defaults `now` to `Date()`), so a back-step's success
+    /// depends on which real-world weekday the suite happens to run on. Forward navigation is
+    /// never clamped, which exercises the same `followsToday` path without that flakiness.
+    func testTickDoesNotMoveTheWindowAtMidnightAfterTheUserHasNavigated() {
+        let tmp = scratchDirectory()
+        defer { try? FileManager.default.removeItem(at: tmp) }
+        let viewModel = makeViewModel(tmp)
+
+        viewModel.stepForward()
+        let navigated = viewModel.window
+
+        // Cross a day boundary while the user is looking at a week they deliberately chose.
+        let tomorrow = Calendar.current.date(byAdding: .day, value: 1, to: Date())!
+        viewModel.tick(now: tomorrow)
+
+        XCTAssertEqual(viewModel.window, navigated,
+                       "midnight must not yank the window back to today once the user has navigated")
+    }
+
+    func testGoToTodayRestoresFollowingTheCalendar() {
+        let tmp = scratchDirectory()
+        defer { try? FileManager.default.removeItem(at: tmp) }
+        let viewModel = makeViewModel(tmp)
+
+        viewModel.stepForward()
+        viewModel.goToToday()
+
+        let tomorrow = Calendar.current.date(byAdding: .day, value: 1, to: Date())!
+        viewModel.tick(now: tomorrow)
+
+        XCTAssertEqual(viewModel.window, Sheet.window(anchor: tomorrow, mode: .week),
+                       "goToToday must restore the follow-the-calendar behaviour")
+    }
 }

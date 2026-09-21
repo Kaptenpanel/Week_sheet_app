@@ -46,6 +46,11 @@ public final class SheetViewModel: ObservableObject {
     @Published var anchor = Date()
     /// Start of the current day. Published so the sheet redraws when the date rolls over.
     @Published private(set) var today = Calendar.current.startOfDay(for: Date())
+    /// True while the window should track the calendar. Deliberate navigation clears it;
+    /// `goToToday()` restores it. Inferring this from the window's position instead does not
+    /// work: a sliding window still contains today several steps back, and a week-mode anchor
+    /// can be any day inside a window that does not move all week.
+    private var followsToday = true
 
     let store: FileStore
     private var eventMonitor: Any?
@@ -92,10 +97,7 @@ public final class SheetViewModel: ObservableObject {
         let start = Calendar.current.startOfDay(for: now)
         if start != today {
             today = start
-            // The window is a pure function of the anchor, so the anchor has to follow the
-            // calendar -- otherwise the sheet keeps showing the week that has just ended, with
-            // no column highlighted once the new day falls outside it.
-            anchor = now
+            if followsToday { anchor = now }
         }
         pruneIfNeeded(now: now)
     }
@@ -229,6 +231,29 @@ public final class SheetViewModel: ObservableObject {
     func toggleLayoutMode() {
         isHorizontalMode.toggle()
         UserDefaults.standard.set(isHorizontalMode, forKey: "horizontalMode")
+    }
+
+    // MARK: Navigation
+
+    var canStepBack: Bool { Sheet.canStepBack(from: anchor, mode: windowMode) }
+
+    func stepBack() {
+        guard canStepBack else { return }
+        anchor = Sheet.steppedAnchor(anchor, by: -1, mode: windowMode)
+        followsToday = false
+        cancelEditing()
+    }
+
+    func stepForward() {
+        anchor = Sheet.steppedAnchor(anchor, by: 1, mode: windowMode)
+        followsToday = false
+        cancelEditing()
+    }
+
+    func goToToday() {
+        anchor = Date()
+        followsToday = true
+        cancelEditing()
     }
 
     // MARK: Key handler

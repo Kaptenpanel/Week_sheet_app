@@ -13,6 +13,9 @@ public final class WindowController: NSObject {
     private var editHotKeyRef: EventHotKeyRef?
     private var visibilityHotKeyRef: EventHotKeyRef?
     private var layoutHotKeyRef: EventHotKeyRef?
+    private var backHotKeyRef: EventHotKeyRef?
+    private var forwardHotKeyRef: EventHotKeyRef?
+    private var todayHotKeyRef: EventHotKeyRef?
     private var globalClickMonitor: Any?
     private var cancellables = Set<AnyCancellable>()
     private(set) var isSheetHidden = false
@@ -95,6 +98,9 @@ public final class WindowController: NSObject {
         if let ref = editHotKeyRef { UnregisterEventHotKey(ref) }
         if let ref = visibilityHotKeyRef { UnregisterEventHotKey(ref) }
         if let ref = layoutHotKeyRef { UnregisterEventHotKey(ref) }
+        if let ref = backHotKeyRef { UnregisterEventHotKey(ref) }
+        if let ref = forwardHotKeyRef { UnregisterEventHotKey(ref) }
+        if let ref = todayHotKeyRef { UnregisterEventHotKey(ref) }
         if let m = globalClickMonitor { NSEvent.removeMonitor(m) }
     }
 
@@ -137,6 +143,10 @@ public final class WindowController: NSObject {
         let newFrame = NSRect(x: window.frame.origin.x, y: max(y, screen.visibleFrame.minY), width: width, height: height)
         window.setFrame(newFrame, display: true, animate: true)
     }
+
+    @objc public func stepBack() { viewModel.stepBack() }
+    @objc public func stepForward() { viewModel.stepForward() }
+    @objc public func goToToday() { viewModel.goToToday() }
 
     private func enterEditMode() {
         viewModel.installKeyHandler()
@@ -205,6 +215,27 @@ public final class WindowController: NSObject {
             GetApplicationEventTarget(), 0,
             &layoutHotKeyRef
         )
+
+        RegisterEventHotKey(
+            UInt32(kVK_LeftArrow), modifiers,
+            EventHotKeyID(signature: sig, id: 4),
+            GetApplicationEventTarget(), 0,
+            &backHotKeyRef
+        )
+
+        RegisterEventHotKey(
+            UInt32(kVK_RightArrow), modifiers,
+            EventHotKeyID(signature: sig, id: 5),
+            GetApplicationEventTarget(), 0,
+            &forwardHotKeyRef
+        )
+
+        RegisterEventHotKey(
+            UInt32(kVK_ANSI_0), modifiers,
+            EventHotKeyID(signature: sig, id: 6),
+            GetApplicationEventTarget(), 0,
+            &todayHotKeyRef
+        )
     }
 }
 
@@ -230,6 +261,9 @@ private func hotKeyHandler(
         case 1: controller.toggleEditMode()
         case 2: controller.toggleVisibility()
         case 3: controller.toggleLayoutMode()
+        case 4: controller.stepBack()
+        case 5: controller.stepForward()
+        case 6: controller.goToToday()
         default: break
         }
     }
