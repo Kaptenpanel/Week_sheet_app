@@ -948,7 +948,7 @@ public struct Sheet: Equatable, Codable {
 - [ ] **Step 4: Run the tests and verify they pass**
 
 Run: `swift test`
-Expected: PASS, 81 tests (58 + 23 new), 0 failures.
+Expected: PASS, 80 tests (58 + 22 new), 0 failures. Counts here are package-wide (`WeekTests` plus `FileStoreTests`), not per-file.
 
 - [ ] **Step 5: Commit**
 
@@ -1219,7 +1219,7 @@ Append inside `Sheet` in `Sources/WeekSheet/Week.swift`, after the weekly-focus 
 - [ ] **Step 4: Run the tests and verify they pass**
 
 Run: `swift test`
-Expected: PASS, 100 tests (81 + 19 new), 0 failures.
+Expected: PASS, 98 tests (80 + 18 new), 0 failures.
 
 - [ ] **Step 5: Commit**
 
@@ -1387,7 +1387,7 @@ struct LegacyWeek: Decodable {
 - [ ] **Step 4: Run the tests and verify they pass**
 
 Run: `swift test`
-Expected: PASS, 107 tests (100 + 7 new), 0 failures.
+Expected: PASS, 105 tests (98 + 7 new), 0 failures.
 
 - [ ] **Step 5: Commit**
 
@@ -1581,7 +1581,7 @@ Append inside `FileStore` in `Sources/WeekSheet/FileStore.swift`, after `save(_ 
 - [ ] **Step 4: Run the tests and verify they pass**
 
 Run: `swift test`
-Expected: PASS, 116 tests (107 + 9 new), 0 failures.
+Expected: PASS, 114 tests (105 + 9 new), 0 failures.
 
 - [ ] **Step 5: Commit**
 
@@ -2040,7 +2040,7 @@ extension Sheet {
 - [ ] **Step 8: Run the tests**
 
 Run: `swift test`
-Expected: PASS. 68 tests — 116 from Task 6 minus 48 deleted with the old model. The exact count matters less than 0 failures and no remaining reference to `Week`.
+Expected: PASS. The count drops sharply — 114 from Task 6 minus however many old-model tests Step 2 deletes. Do not treat any particular number as the target: what matters is 0 failures, every surviving test still meaningful, and no remaining reference to `Week`. Report the number you land on.
 
 - [ ] **Step 9: Confirm `Week` is gone**
 
@@ -2216,7 +2216,7 @@ And route them in `hotKeyHandler`'s switch:
 - [ ] **Step 5: Run the tests**
 
 Run: `swift test`
-Expected: PASS, 70 tests, 0 failures.
+Expected: PASS, Task 7's total plus the 2 tests added here, 0 failures.
 
 - [ ] **Step 6: Verify in the app**
 
@@ -2346,7 +2346,7 @@ And add the handler beside `toggleLayoutFromMenu`:
 - [ ] **Step 4: Run the tests**
 
 Run: `swift test`
-Expected: PASS, 70 tests, 0 failures. No new tests here — the window maths for both modes is already covered by Task 4, and this task only wires a flag to it.
+Expected: PASS, the same count as Task 8, 0 failures. No new tests here — the window maths for both modes is already covered by Task 4, and this task only wires a flag to it.
 
 - [ ] **Step 5: Verify in the app**
 
@@ -2470,7 +2470,7 @@ Update the two references: `bottom` and `sidebar` each use `focusPanel` in place
 - [ ] **Step 5: Run the tests**
 
 Run: `swift test`
-Expected: PASS, 71 tests, 0 failures.
+Expected: PASS, Task 9's count plus the 1 test added here, 0 failures.
 
 - [ ] **Step 6: Verify in the app**
 
