@@ -795,32 +795,37 @@ final class WeekTests: XCTestCase {
     }
 
     func testLegacyDaysBecomeDatedBuckets() throws {
-        let sheet = try JSONDecoder().decode(LegacyWeek.self, from: legacyJSON).toSheet()
+        let legacy = try JSONDecoder().decode(LegacyWeek.self, from: legacyJSON)
+        let sheet = try legacy.toSheet()
         XCTAssertEqual(sheet.buckets[BucketKey("2026-09-21")!]?.first?.text, "Monday thing")
         XCTAssertEqual(sheet.buckets[BucketKey("2026-09-25")!]?.first?.text, "Friday thing")
     }
 
     func testLegacyWeekendLandsOnTheSaturdayKey() throws {
-        let sheet = try JSONDecoder().decode(LegacyWeek.self, from: legacyJSON).toSheet()
+        let legacy = try JSONDecoder().decode(LegacyWeek.self, from: legacyJSON)
+        let sheet = try legacy.toSheet()
         let saturday = BucketKey("2026-09-26")!
         XCTAssertTrue(saturday.isWeekend)
         XCTAssertEqual(sheet.buckets[saturday]?.first?.text, "Weekend thing")
     }
 
     func testLegacyMigrationPreservesItemIDsAndDoneFlags() throws {
-        let sheet = try JSONDecoder().decode(LegacyWeek.self, from: legacyJSON).toSheet()
+        let legacy = try JSONDecoder().decode(LegacyWeek.self, from: legacyJSON)
+        let sheet = try legacy.toSheet()
         let monday = sheet.buckets[BucketKey("2026-09-21")!]!.first!
         XCTAssertEqual(monday.id, UUID(uuidString: "550E8400-E29B-41D4-A716-446655440001"))
         XCTAssertTrue(monday.done)
     }
 
     func testLegacyReminderBecomesTheWeeklyFocus() throws {
-        let sheet = try JSONDecoder().decode(LegacyWeek.self, from: legacyJSON).toSheet()
+        let legacy = try JSONDecoder().decode(LegacyWeek.self, from: legacyJSON)
+        let sheet = try legacy.toSheet()
         XCTAssertEqual(sheet.focus(for: Week.parseDate("2026-09-21")!), "Rent, Tuesday")
     }
 
     func testLegacyIdeasCarryOver() throws {
-        let sheet = try JSONDecoder().decode(LegacyWeek.self, from: legacyJSON).toSheet()
+        let legacy = try JSONDecoder().decode(LegacyWeek.self, from: legacyJSON)
+        let sheet = try legacy.toSheet()
         XCTAssertEqual(sheet.ideas.map(\.text), ["An idea"])
     }
 
@@ -833,7 +838,8 @@ final class WeekTests: XCTestCase {
             "reminder": ""
         }
         """.data(using: .utf8)!
-        let sheet = try JSONDecoder().decode(LegacyWeek.self, from: json).toSheet()
+        let legacy = try JSONDecoder().decode(LegacyWeek.self, from: json)
+        let sheet = try legacy.toSheet()
         XCTAssertTrue(sheet.buckets.isEmpty)
         XCTAssertTrue(sheet.weeklyFocus.isEmpty, "an empty reminder should not create a focus entry")
     }
@@ -842,8 +848,67 @@ final class WeekTests: XCTestCase {
         let json = """
         { "weekStart": "2026-09-21" }
         """.data(using: .utf8)!
-        let sheet = try JSONDecoder().decode(LegacyWeek.self, from: json).toSheet()
+        let legacy = try JSONDecoder().decode(LegacyWeek.self, from: json)
+        let sheet = try legacy.toSheet()
         XCTAssertTrue(sheet.buckets.isEmpty)
         XCTAssertTrue(sheet.ideas.isEmpty)
+    }
+
+    func testLegacyUnparseableWeekStartThrows() {
+        let json = """
+        {
+            "weekStart": "not-a-date",
+            "days": { "mon": [{ "id": "550E8400-E29B-41D4-A716-446655440001", "text": "Precious", "done": false }] },
+            "ideas": [],
+            "reminder": "Keep me"
+        }
+        """.data(using: .utf8)!
+        let legacy = try! JSONDecoder().decode(LegacyWeek.self, from: json)
+        XCTAssertThrowsError(try legacy.toSheet(), "a file we cannot date must abort the migration, not return an empty sheet the caller would write back")
+    }
+
+    func testLegacyNonMondayWeekStartThrows() throws {
+        // 2026-09-22 is a Tuesday. With that start, `fri` and `wknd` would both resolve to
+        // Saturday 2026-09-26 and merge.
+        let json = """
+        {
+            "weekStart": "2026-09-22",
+            "days": {
+                "fri": [{ "id": "550E8400-E29B-41D4-A716-446655440002", "text": "Friday", "done": false }],
+                "wknd": [{ "id": "550E8400-E29B-41D4-A716-446655440003", "text": "Weekend", "done": false }]
+            },
+            "ideas": [],
+            "reminder": ""
+        }
+        """.data(using: .utf8)!
+        let legacy = try JSONDecoder().decode(LegacyWeek.self, from: json)
+        XCTAssertThrowsError(try legacy.toSheet())
+    }
+
+    func testLegacyOverCapDayOverflowsToIdeas() throws {
+        // A well-formed file can still hold more than three items in a day. `validate()` moves the
+        // excess to ideas, in reverse order because it pops from the end, and clears `done` on them.
+        let json = """
+        {
+            "weekStart": "2026-09-21",
+            "days": {
+                "mon": [
+                    { "id": "550E8400-E29B-41D4-A716-446655440010", "text": "Item 0", "done": true },
+                    { "id": "550E8400-E29B-41D4-A716-446655440011", "text": "Item 1", "done": true },
+                    { "id": "550E8400-E29B-41D4-A716-446655440012", "text": "Item 2", "done": true },
+                    { "id": "550E8400-E29B-41D4-A716-446655440013", "text": "Item 3", "done": true },
+                    { "id": "550E8400-E29B-41D4-A716-446655440014", "text": "Item 4", "done": true }
+                ]
+            },
+            "ideas": [],
+            "reminder": ""
+        }
+        """.data(using: .utf8)!
+        let legacy = try JSONDecoder().decode(LegacyWeek.self, from: json)
+        let sheet = try legacy.toSheet()
+
+        XCTAssertEqual(sheet.buckets[BucketKey("2026-09-21")!]?.count, 3)
+        XCTAssertEqual(sheet.ideas.map(\.text), ["Item 4", "Item 3"])
+        XCTAssertTrue(sheet.ideas.allSatisfy { !$0.done }, "validate() clears done on overflowed items")
     }
 }

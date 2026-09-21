@@ -29,9 +29,25 @@ struct LegacyWeek: Decodable {
         "mon": 0, "tue": 1, "wed": 2, "thu": 3, "fri": 4, "wknd": 5
     ]
 
-    func toSheet() -> Sheet {
-        guard let monday = Week.parseDate(weekStart) else { return .empty() }
-        let cal = Calendar.current
+    /// Throws rather than returning a partial or empty sheet: the caller writes the result back
+    /// over `week.json`, so a file we cannot interpret must abort the migration and leave the
+    /// original untouched. `weekStart` was always a Monday when the old app wrote it, and the
+    /// offset table is only collision-free if it still is.
+    func toSheet() throws -> Sheet {
+        guard let monday = Week.parseDate(weekStart) else {
+            throw DecodingError.dataCorrupted(.init(
+                codingPath: [],
+                debugDescription: "weekStart is not an ISO yyyy-MM-dd date: \(weekStart)"
+            ))
+        }
+        var cal = Calendar.current
+        cal.firstWeekday = 2
+        guard cal.component(.weekday, from: monday) == 2 else {
+            throw DecodingError.dataCorrupted(.init(
+                codingPath: [],
+                debugDescription: "weekStart is not a Monday: \(weekStart)"
+            ))
+        }
 
         var buckets: [BucketKey: [Item]] = [:]
         for (day, items) in days {
