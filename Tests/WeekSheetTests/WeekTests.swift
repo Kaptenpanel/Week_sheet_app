@@ -407,4 +407,201 @@ final class WeekTests: XCTestCase {
         XCTAssertEqual(String(data: data, encoding: .utf8), "\"2026-09-26\"")
         XCTAssertEqual(try JSONDecoder().decode(BucketKey.self, from: data), key)
     }
+
+    // MARK: - Sheet: items
+
+    private let mon = BucketKey("2026-09-21")!
+    private let tue = BucketKey("2026-09-22")!
+    private let wknd = BucketKey("2026-09-26")!
+
+    func testSheetEmptyHasNothing() {
+        let sheet = Sheet.empty()
+        XCTAssertTrue(sheet.buckets.isEmpty)
+        XCTAssertTrue(sheet.ideas.isEmpty)
+        XCTAssertTrue(sheet.weeklyFocus.isEmpty)
+    }
+
+    func testSheetAddItem() throws {
+        var sheet = Sheet.empty()
+        let item = try sheet.addItem(to: mon, text: "Call Ana")
+        XCTAssertEqual(sheet.buckets[mon]?.count, 1)
+        XCTAssertEqual(sheet.buckets[mon]?.first?.text, "Call Ana")
+        XCTAssertFalse(item.done)
+    }
+
+    func testSheetAddItemThrowsWhenBucketFull() throws {
+        var sheet = Sheet.empty()
+        try sheet.addItem(to: tue, text: "A")
+        try sheet.addItem(to: tue, text: "B")
+        try sheet.addItem(to: tue, text: "C")
+        XCTAssertThrowsError(try sheet.addItem(to: tue, text: "D")) { error in
+            XCTAssertEqual(error as? SheetError, .dayFull(self.tue))
+        }
+        XCTAssertEqual(sheet.buckets[tue]?.count, 3)
+    }
+
+    func testSheetToggleDone() throws {
+        var sheet = Sheet.empty()
+        let item = try sheet.addItem(to: mon, text: "Thing")
+        try sheet.toggleDone(item.id)
+        XCTAssertTrue(sheet.buckets[mon]![0].done)
+        try sheet.toggleDone(item.id)
+        XCTAssertFalse(sheet.buckets[mon]![0].done)
+    }
+
+    func testSheetToggleDoneThrowsForUnknownID() {
+        var sheet = Sheet.empty()
+        XCTAssertThrowsError(try sheet.toggleDone(UUID()))
+    }
+
+    func testSheetDeleteItem() throws {
+        var sheet = Sheet.empty()
+        let item = try sheet.addItem(to: mon, text: "Thing")
+        try sheet.deleteItem(item.id)
+        XCTAssertNil(sheet.buckets[mon]?.first)
+    }
+
+    func testSheetMoveItemBetweenBuckets() throws {
+        var sheet = Sheet.empty()
+        let item = try sheet.addItem(to: mon, text: "Slides")
+        try sheet.moveItem(item.id, to: wknd, at: 0)
+        XCTAssertTrue(sheet.buckets[mon, default: []].isEmpty)
+        XCTAssertEqual(sheet.buckets[wknd]?.first?.text, "Slides")
+    }
+
+    func testSheetMoveItemThrowsWhenTargetFull() throws {
+        var sheet = Sheet.empty()
+        try sheet.addItem(to: tue, text: "A")
+        try sheet.addItem(to: tue, text: "B")
+        try sheet.addItem(to: tue, text: "C")
+        let item = try sheet.addItem(to: mon, text: "D")
+        XCTAssertThrowsError(try sheet.moveItem(item.id, to: tue, at: 0)) { error in
+            XCTAssertEqual(error as? SheetError, .dayFull(self.tue))
+        }
+    }
+
+    func testSheetMoveWithinBucketWhenFullIsAllowed() throws {
+        var sheet = Sheet.empty()
+        try sheet.addItem(to: tue, text: "A")
+        try sheet.addItem(to: tue, text: "B")
+        let c = try sheet.addItem(to: tue, text: "C")
+        try sheet.moveItem(c.id, to: tue, at: 0)
+        XCTAssertEqual(sheet.buckets[tue]?.map(\.text), ["C", "A", "B"])
+    }
+
+    func testSheetMoveToIdeasClearsDone() throws {
+        var sheet = Sheet.empty()
+        let item = try sheet.addItem(to: mon, text: "Thing")
+        try sheet.toggleDone(item.id)
+        try sheet.moveToIdeas(item.id)
+        XCTAssertTrue(sheet.buckets[mon, default: []].isEmpty)
+        XCTAssertEqual(sheet.ideas.count, 1)
+        XCTAssertFalse(sheet.ideas[0].done)
+    }
+
+    func testSheetRemoveIdea() throws {
+        var sheet = Sheet.empty()
+        let idea = sheet.addIdea(text: "Someday")
+        try sheet.removeIdea(idea.id)
+        XCTAssertTrue(sheet.ideas.isEmpty)
+    }
+
+    // MARK: - Sheet: validate
+
+    func testSheetValidateOverflowsToIdeas() {
+        var sheet = Sheet.empty()
+        sheet.buckets[tue] = (0..<5).map { Item(text: "Item \($0)") }
+        sheet.validate()
+        XCTAssertEqual(sheet.buckets[tue]?.count, 3)
+        XCTAssertEqual(sheet.ideas.count, 2)
+        XCTAssertEqual(sheet.ideas.map(\.text), ["Item 4", "Item 3"])
+    }
+
+    func testSheetValidateClearsIdeaDoneFlag() {
+        var sheet = Sheet.empty()
+        sheet.ideas = [Item(text: "Idea", done: true)]
+        sheet.validate()
+        XCTAssertFalse(sheet.ideas[0].done)
+    }
+
+    func testSheetValidateDropsEmptyBuckets() {
+        var sheet = Sheet.empty()
+        sheet.buckets[mon] = []
+        sheet.validate()
+        XCTAssertTrue(sheet.buckets.isEmpty)
+    }
+
+    // MARK: - Sheet: weekly focus
+
+    func testFocusIsKeyedByMonday() {
+        var sheet = Sheet.empty()
+        let wed = Week.parseDate("2026-09-23")!
+        sheet.setFocus("Ship the window", for: wed)
+        XCTAssertEqual(sheet.weeklyFocus[BucketKey("2026-09-21")!], "Ship the window")
+        XCTAssertEqual(sheet.focus(for: Week.parseDate("2026-09-27")!), "Ship the window")
+    }
+
+    func testFocusIsEmptyForAnUntouchedWeek() {
+        let sheet = Sheet.empty()
+        XCTAssertEqual(sheet.focus(for: Week.parseDate("2026-09-21")!), "")
+    }
+
+    func testSettingEmptyFocusRemovesIt() {
+        var sheet = Sheet.empty()
+        let mondayDate = Week.parseDate("2026-09-21")!
+        sheet.setFocus("Something", for: mondayDate)
+        sheet.setFocus("", for: mondayDate)
+        XCTAssertTrue(sheet.weeklyFocus.isEmpty)
+    }
+
+    // MARK: - Sheet: Codable
+
+    func testSheetCodableRoundTrip() throws {
+        var sheet = Sheet.empty()
+        try sheet.addItem(to: mon, text: "Monday thing")
+        try sheet.addItem(to: wknd, text: "Weekend thing")
+        sheet.addIdea(text: "An idea")
+        sheet.setFocus("Rent", for: Week.parseDate("2026-09-21")!)
+
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        let data = try encoder.encode(sheet)
+        XCTAssertEqual(try JSONDecoder().decode(Sheet.self, from: data), sheet)
+    }
+
+    func testSheetEncodesBucketsAsAJSONObject() throws {
+        var sheet = Sheet.empty()
+        try sheet.addItem(to: mon, text: "Thing")
+        let data = try JSONEncoder().encode(sheet)
+        let obj = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        let buckets = obj?["buckets"] as? [String: Any]
+        XCTAssertNotNil(buckets?["2026-09-21"])
+    }
+
+    func testSheetDecodeSnapsASundayKey() throws {
+        let json = """
+        {
+            "buckets": { "2026-09-27": [{ "id": "550E8400-E29B-41D4-A716-446655440000", "text": "Sunday", "done": false }] },
+            "ideas": [],
+            "weeklyFocus": {}
+        }
+        """.data(using: .utf8)!
+        let sheet = try JSONDecoder().decode(Sheet.self, from: json)
+        XCTAssertEqual(sheet.buckets[BucketKey("2026-09-26")!]?.first?.text, "Sunday")
+    }
+
+    func testSheetDecodeToleratesMissingFields() throws {
+        let sheet = try JSONDecoder().decode(Sheet.self, from: "{}".data(using: .utf8)!)
+        XCTAssertTrue(sheet.buckets.isEmpty)
+        XCTAssertTrue(sheet.ideas.isEmpty)
+        XCTAssertTrue(sheet.weeklyFocus.isEmpty)
+    }
+
+    func testSheetDecodeDropsUnparseableKeys() throws {
+        let json = """
+        { "buckets": { "garbage": [] }, "ideas": [], "weeklyFocus": {} }
+        """.data(using: .utf8)!
+        let sheet = try JSONDecoder().decode(Sheet.self, from: json)
+        XCTAssertTrue(sheet.buckets.isEmpty)
+    }
 }

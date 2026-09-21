@@ -355,3 +355,203 @@ public struct Week: Equatable, Codable {
         return formatDate(monday)
     }
 }
+
+public enum WindowMode: String, Codable {
+    /// Six buckets starting at the Monday of the anchor's week.
+    case week
+    /// Six buckets starting one bucket before the anchor's, so the anchor sits in slot 1.
+    case sliding
+}
+
+public enum SheetError: Error, Equatable {
+    case dayFull(BucketKey)
+    case itemNotFound(UUID)
+}
+
+/// Everything the sheet stores. There is no "current week": buckets are addressed by date and
+/// the view decides which six to render, so nothing here has to be reset when Monday arrives.
+public struct Sheet: Equatable, Codable {
+    public static let maxItemsPerDay = 3
+    public static let retentionDays = 7
+
+    public var buckets: [BucketKey: [Item]]
+    public var ideas: [Item]
+    /// Keyed by the Monday of the week it belongs to.
+    public var weeklyFocus: [BucketKey: String]
+
+    public init(buckets: [BucketKey: [Item]], ideas: [Item], weeklyFocus: [BucketKey: String]) {
+        self.buckets = buckets
+        self.ideas = ideas
+        self.weeklyFocus = weeklyFocus
+    }
+
+    public static func empty() -> Sheet {
+        Sheet(buckets: [:], ideas: [], weeklyFocus: [:])
+    }
+
+    // MARK: - Codable
+
+    private enum CodingKeys: String, CodingKey {
+        case buckets, ideas, weeklyFocus
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        // Swift encodes a Dictionary as a JSON object only when its key is String or Int, so
+        // both maps are stored string-keyed and re-keyed here. An unparseable key is dropped.
+        let rawBuckets = try container.decodeIfPresent([String: [Item]].self, forKey: .buckets) ?? [:]
+        var decodedBuckets: [BucketKey: [Item]] = [:]
+        for (raw, items) in rawBuckets {
+            guard let key = BucketKey(raw) else { continue }
+            decodedBuckets[key, default: []].append(contentsOf: items)
+        }
+        buckets = decodedBuckets
+
+        ideas = try container.decodeIfPresent([Item].self, forKey: .ideas) ?? []
+
+        let rawFocus = try container.decodeIfPresent([String: String].self, forKey: .weeklyFocus) ?? [:]
+        var decodedFocus: [BucketKey: String] = [:]
+        for (raw, text) in rawFocus {
+            guard let key = BucketKey(raw) else { continue }
+            decodedFocus[key] = text
+        }
+        weeklyFocus = decodedFocus
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(Dictionary(uniqueKeysWithValues: buckets.map { ($0.key.id, $0.value) }), forKey: .buckets)
+        try container.encode(ideas, forKey: .ideas)
+        try container.encode(Dictionary(uniqueKeysWithValues: weeklyFocus.map { ($0.key.id, $0.value) }), forKey: .weeklyFocus)
+    }
+
+    // MARK: - Validation
+
+    public mutating func validate() {
+        // Sorted so overflow lands in `ideas` in a deterministic order.
+        for key in buckets.keys.sorted() {
+            var items = buckets[key, default: []]
+            while items.count > Self.maxItemsPerDay {
+                var overflow = items.removeLast()
+                overflow.done = false
+                ideas.append(overflow)
+            }
+            if items.isEmpty {
+                buckets.removeValue(forKey: key)
+            } else {
+                buckets[key] = items
+            }
+        }
+        for i in ideas.indices { ideas[i].done = false }
+    }
+
+    // MARK: - Bucket items
+
+    @discardableResult
+    public mutating func addItem(to key: BucketKey, text: String) throws -> Item {
+        guard buckets[key, default: []].count < Self.maxItemsPerDay else {
+            throw SheetError.dayFull(key)
+        }
+        let item = Item(text: text)
+        buckets[key, default: []].append(item)
+        return item
+    }
+
+    public mutating func toggleDone(_ itemID: UUID) throws {
+        // `Array(...)` throughout: these loops mutate `buckets`, so they must not iterate a
+        // keys view over the dictionary they are changing.
+        for key in Array(buckets.keys) {
+            if let idx = buckets[key]?.firstIndex(where: { $0.id == itemID }) {
+                buckets[key]![idx].done.toggle()
+                return
+            }
+        }
+        if ideas.contains(where: { $0.id == itemID }) { return }
+        throw SheetError.itemNotFound(itemID)
+    }
+
+    public mutating func deleteItem(_ itemID: UUID) throws {
+        for key in Array(buckets.keys) {
+            if let idx = buckets[key]?.firstIndex(where: { $0.id == itemID }) {
+                buckets[key]!.remove(at: idx)
+                if buckets[key]!.isEmpty { buckets.removeValue(forKey: key) }
+                return
+            }
+        }
+        if let idx = ideas.firstIndex(where: { $0.id == itemID }) {
+            ideas.remove(at: idx)
+            return
+        }
+        throw SheetError.itemNotFound(itemID)
+    }
+
+    public mutating func moveItem(_ itemID: UUID, to key: BucketKey, at position: Int) throws {
+        let target = buckets[key, default: []]
+        let isInTarget = target.contains(where: { $0.id == itemID })
+        let effectiveCount = isInTarget ? target.count - 1 : target.count
+        guard effectiveCount < Self.maxItemsPerDay else {
+            throw SheetError.dayFull(key)
+        }
+
+        var found: Item?
+        for k in Array(buckets.keys) {
+            if let idx = buckets[k]?.firstIndex(where: { $0.id == itemID }) {
+                found = buckets[k]!.remove(at: idx)
+                if buckets[k]!.isEmpty, k != key { buckets.removeValue(forKey: k) }
+                break
+            }
+        }
+        if found == nil, let idx = ideas.firstIndex(where: { $0.id == itemID }) {
+            found = ideas.remove(at: idx)
+        }
+        guard let item = found else { throw SheetError.itemNotFound(itemID) }
+
+        let pos = min(position, buckets[key, default: []].count)
+        buckets[key, default: []].insert(item, at: pos)
+    }
+
+    public mutating func moveToIdeas(_ itemID: UUID) throws {
+        for key in Array(buckets.keys) {
+            if let idx = buckets[key]?.firstIndex(where: { $0.id == itemID }) {
+                var item = buckets[key]!.remove(at: idx)
+                if buckets[key]!.isEmpty { buckets.removeValue(forKey: key) }
+                item.done = false
+                ideas.append(item)
+                return
+            }
+        }
+        if ideas.contains(where: { $0.id == itemID }) { return }
+        throw SheetError.itemNotFound(itemID)
+    }
+
+    // MARK: - Ideas
+
+    @discardableResult
+    public mutating func addIdea(text: String) -> Item {
+        let item = Item(text: text)
+        ideas.append(item)
+        return item
+    }
+
+    public mutating func removeIdea(_ itemID: UUID) throws {
+        guard let idx = ideas.firstIndex(where: { $0.id == itemID }) else {
+            throw SheetError.itemNotFound(itemID)
+        }
+        ideas.remove(at: idx)
+    }
+
+    // MARK: - Weekly focus
+
+    public func focus(for anchor: Date) -> String {
+        weeklyFocus[BucketKey.monday(of: anchor)] ?? ""
+    }
+
+    public mutating func setFocus(_ text: String, for anchor: Date) {
+        let key = BucketKey.monday(of: anchor)
+        if text.isEmpty {
+            weeklyFocus.removeValue(forKey: key)
+        } else {
+            weeklyFocus[key] = text
+        }
+    }
+}
