@@ -1126,8 +1126,9 @@ Append to `Tests/WeekSheetTests/WeekTests.swift`:
     }
 
     func testPruneJudgesAWeekendBucketByItsSunday() throws {
-        // Sat 2026-09-12 / Sun 2026-09-13. Against a Mon 2026-09-20 now, the horizon is
-        // 2026-09-13, so the bucket survives on the strength of its Sunday.
+        // Sat 2026-09-12 / Sun 2026-09-13. Against a Sun 2026-09-20 now, the horizon is
+        // 2026-09-13, so the bucket survives on the strength of its Sunday — judged by its key
+        // it would already be gone.
         let now = Week.parseDate("2026-09-20")!
         var sheet = Sheet.empty()
         try sheet.addItem(to: BucketKey("2026-09-12")!, text: "Weekend")
