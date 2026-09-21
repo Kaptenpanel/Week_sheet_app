@@ -86,16 +86,23 @@ public final class SheetViewModel: ObservableObject {
 
     private func save() { try? store.save(sheet) }
 
-    /// Rolls the highlighted day forward at midnight and drops buckets past the horizon.
-    func tick() {
-        let start = Calendar.current.startOfDay(for: Date())
-        if start != today { today = start }
-        pruneIfNeeded()
+    /// Rolls the highlighted day forward at midnight, moves the window with the calendar, and
+    /// drops buckets past the horizon.
+    func tick(now: Date = Date()) {
+        let start = Calendar.current.startOfDay(for: now)
+        if start != today {
+            today = start
+            // The window is a pure function of the anchor, so the anchor has to follow the
+            // calendar -- otherwise the sheet keeps showing the week that has just ended, with
+            // no column highlighted once the new day falls outside it.
+            anchor = now
+        }
+        pruneIfNeeded(now: now)
     }
 
-    func pruneIfNeeded() {
+    func pruneIfNeeded(now: Date = Date()) {
         let countBefore = sheet.buckets.count
-        sheet.prune()
+        sheet.prune(now: now)
         if sheet.buckets.count != countBefore { save() }
     }
 

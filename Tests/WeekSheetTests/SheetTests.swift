@@ -611,4 +611,23 @@ final class SheetTests: XCTestCase {
         XCTAssertEqual(sheet.ideas.map(\.text), ["Item 4", "Item 3"])
         XCTAssertTrue(sheet.ideas.allSatisfy { !$0.done }, "validate() clears done on overflowed items")
     }
+
+    // MARK: - SheetViewModel
+
+    func testTickMovesTheWindowWhenTheWeekRollsOver() {
+        let tmp = FileManager.default.temporaryDirectory
+            .appendingPathComponent("WeekSheetTick-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: tmp) }
+        let viewModel = SheetViewModel(store: FileStore(baseURL: tmp))
+
+        // Sunday still belongs to the week that starts on the 21st.
+        viewModel.tick(now: Sheet.parseDate("2026-09-27")!)
+        XCTAssertEqual(viewModel.window.first?.id, "2026-09-21")
+
+        // Crossing into Monday must move the window, or the sheet shows a finished week with
+        // nothing highlighted.
+        viewModel.tick(now: Sheet.parseDate("2026-09-28")!)
+        XCTAssertEqual(viewModel.window.first?.id, "2026-09-28")
+        XCTAssertEqual(BucketKey.containing(viewModel.today), BucketKey("2026-09-28")!)
+    }
 }

@@ -39,13 +39,13 @@ final class FileStoreTests: XCTestCase {
         try data.write(to: tmpDir.appendingPathComponent("week.json"))
     }
 
-    func testLoadSheetReturnsEmptyWhenNoFile() throws {
+    func testLoadReturnsEmptyWhenNoFile() throws {
         let sheet = try store.load()
         XCTAssertTrue(sheet.buckets.isEmpty)
         XCTAssertTrue(sheet.ideas.isEmpty)
     }
 
-    func testSaveAndLoadSheet() throws {
+    func testSaveAndLoad() throws {
         var sheet = Sheet.empty()
         let monday = BucketKey("2026-09-21")!
         try sheet.addItem(to: monday, text: "Persisted")
@@ -60,7 +60,7 @@ final class FileStoreTests: XCTestCase {
         XCTAssertEqual(loaded.focus(for: Sheet.parseDate("2026-09-21")!), "Rent")
     }
 
-    func testLoadSheetValidatesOverflow() throws {
+    func testLoadValidatesOverflow() throws {
         var sheet = Sheet.empty()
         let tuesday = BucketKey("2026-09-22")!
         sheet.buckets[tuesday] = (0..<5).map { Item(text: "Item \($0)") }
@@ -71,7 +71,7 @@ final class FileStoreTests: XCTestCase {
         XCTAssertEqual(loaded.ideas.count, 2)
     }
 
-    func testLoadSheetMigratesALegacyFile() throws {
+    func testLoadMigratesALegacyFile() throws {
         try writeRawFile(legacyFileJSON)
         let sheet = try store.load()
         XCTAssertEqual(sheet.buckets[BucketKey("2026-09-21")!]?.first?.text, "Monday thing")
@@ -96,7 +96,7 @@ final class FileStoreTests: XCTestCase {
         XCTAssertEqual(first, second, "migration must be idempotent")
     }
 
-    func testLoadSheetAndPruneDropsOldBuckets() throws {
+    func testLoadAndPruneDropsOldBuckets() throws {
         var sheet = Sheet.empty()
         try sheet.addItem(to: BucketKey("2026-09-11")!, text: "Too old")
         try sheet.addItem(to: BucketKey("2026-09-21")!, text: "Current")
@@ -117,7 +117,7 @@ final class FileStoreTests: XCTestCase {
         XCTAssertTrue(reloaded.buckets.isEmpty, "the prune should have been written back")
     }
 
-    func testLoadSheetWritesNoHistory() throws {
+    func testLoadWritesNoHistory() throws {
         try writeRawFile(legacyFileJSON)
         _ = try store.loadAndPrune(now: Sheet.parseDate("2026-09-21")!)
         let historyDir = tmpDir.appendingPathComponent("history")
@@ -126,7 +126,7 @@ final class FileStoreTests: XCTestCase {
 
     // MARK: - Migration refusals leave the file intact
 
-    func testLoadSheetLeavesTheFileIntactWhenWeekStartIsUnparseable() throws {
+    func testLoadLeavesTheFileIntactWhenWeekStartIsUnparseable() throws {
         let bad = """
         {
             "weekStart": "not-a-date",
@@ -143,7 +143,7 @@ final class FileStoreTests: XCTestCase {
         XCTAssertEqual(after, bad, "a rejected migration must leave week.json byte-identical")
     }
 
-    func testLoadSheetLeavesTheFileIntactWhenWeekStartIsNotAMonday() throws {
+    func testLoadLeavesTheFileIntactWhenWeekStartIsNotAMonday() throws {
         // 2026-09-22 is a Tuesday, so fri and wknd would collide.
         let bad = """
         {
@@ -161,7 +161,7 @@ final class FileStoreTests: XCTestCase {
         XCTAssertEqual(after, bad)
     }
 
-    func testLoadSheetThrowsOnMalformedJSONWithoutWriting() throws {
+    func testLoadThrowsOnMalformedJSONWithoutWriting() throws {
         let garbage = "this is not json at all".data(using: .utf8)!
         try writeRawFile(garbage)
 
@@ -171,7 +171,7 @@ final class FileStoreTests: XCTestCase {
         XCTAssertEqual(after, garbage, "an unreadable file must be left alone, not replaced")
     }
 
-    func testLoadSheetTreatsAnEmptyObjectAsAnEmptySheetWithoutWriting() throws {
+    func testLoadTreatsAnEmptyObjectAsAnEmptySheetWithoutWriting() throws {
         let empty = "{}".data(using: .utf8)!
         try writeRawFile(empty)
 
@@ -183,7 +183,7 @@ final class FileStoreTests: XCTestCase {
         XCTAssertEqual(after, empty, "reading a new-shape file must not rewrite it")
     }
 
-    func testLoadSheetAndPruneDoesNotRewriteWhenNothingIsPruned() throws {
+    func testLoadAndPruneDoesNotRewriteWhenNothingIsPruned() throws {
         // Compact and unsorted on purpose: any write would re-encode this prettyPrinted and
         // sortedKeys, so byte-equality afterwards is what proves no write happened.
         let compact = """
