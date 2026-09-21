@@ -22,16 +22,37 @@ public final class FileStore {
         guard fileManager.fileExists(atPath: fileURL.path) else { return .empty() }
         let data = try Data(contentsOf: fileURL)
 
+        let wasLegacy = isLegacyPayload(data)
         var sheet: Sheet
-        if isLegacyPayload(data) {
-            sheet = try JSONDecoder().decode(LegacyWeek.self, from: data).toSheet()
-            // Convert on disk so this branch runs exactly once per install.
-            try save(sheet)
-        } else {
-            sheet = try JSONDecoder().decode(Sheet.self, from: data)
+        do {
+            sheet = wasLegacy
+                ? try JSONDecoder().decode(LegacyWeek.self, from: data).toSheet()
+                : try JSONDecoder().decode(Sheet.self, from: data)
+        } catch {
+            // We cannot interpret this file. Move it aside before rethrowing: the caller degrades
+            // to an empty sheet, and the user's first edit would otherwise save over the only
+            // copy of their items. Moving rather than copying means the next launch starts clean
+            // instead of failing forever.
+            try? quarantineUnreadableFile()
+            throw error
         }
+        // Convert on disk so this branch runs exactly once per install.
+        if wasLegacy { try save(sheet) }
         sheet.validate()
         return sheet
+    }
+
+    /// Renames an uninterpretable `week.json` so nothing can overwrite it. Named with today's
+    /// date, suffixed if that name is taken.
+    private func quarantineUnreadableFile() throws {
+        let stamp = Sheet.formatDate(Date())
+        var dest = baseURL.appendingPathComponent("week-unreadable-\(stamp).json")
+        var attempt = 2
+        while fileManager.fileExists(atPath: dest.path) {
+            dest = baseURL.appendingPathComponent("week-unreadable-\(stamp)-\(attempt).json")
+            attempt += 1
+        }
+        try fileManager.moveItem(at: fileURL, to: dest)
     }
 
     public func save(_ sheet: Sheet) throws {

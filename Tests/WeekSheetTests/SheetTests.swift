@@ -149,6 +149,13 @@ final class SheetTests: XCTestCase {
         XCTAssertFalse(sheet.buckets[mon]![0].done)
     }
 
+    func testSheetToggleDoneNoOpOnIdea() throws {
+        var sheet = Sheet.empty()
+        let idea = sheet.addIdea(text: "Maybe")
+        try sheet.toggleDone(idea.id)
+        XCTAssertFalse(sheet.ideas[0].done)
+    }
+
     func testSheetToggleDoneThrowsForUnknownID() {
         var sheet = Sheet.empty()
         XCTAssertThrowsError(try sheet.toggleDone(UUID()))
@@ -161,12 +168,35 @@ final class SheetTests: XCTestCase {
         XCTAssertNil(sheet.buckets[mon]?.first)
     }
 
+    func testSheetDeleteFromIdeas() throws {
+        var sheet = Sheet.empty()
+        let idea = sheet.addIdea(text: "Nope")
+        try sheet.deleteItem(idea.id)
+        XCTAssertTrue(sheet.ideas.isEmpty)
+    }
+
+    func testSheetDeleteThrowsForUnknownID() {
+        var sheet = Sheet.empty()
+        let unknown = UUID()
+        XCTAssertThrowsError(try sheet.deleteItem(unknown)) { error in
+            XCTAssertEqual(error as? SheetError, .itemNotFound(unknown))
+        }
+    }
+
     func testSheetMoveItemBetweenBuckets() throws {
         var sheet = Sheet.empty()
         let item = try sheet.addItem(to: mon, text: "Slides")
         try sheet.moveItem(item.id, to: wknd, at: 0)
         XCTAssertTrue(sheet.buckets[mon, default: []].isEmpty)
         XCTAssertEqual(sheet.buckets[wknd]?.first?.text, "Slides")
+    }
+
+    func testSheetMoveFromIdeasToBucket() throws {
+        var sheet = Sheet.empty()
+        let idea = sheet.addIdea(text: "Promote")
+        try sheet.moveItem(idea.id, to: mon, at: 0)
+        XCTAssertTrue(sheet.ideas.isEmpty)
+        XCTAssertEqual(sheet.buckets[mon]?.first?.text, "Promote")
     }
 
     func testSheetMoveItemThrowsWhenTargetFull() throws {
@@ -199,11 +229,24 @@ final class SheetTests: XCTestCase {
         XCTAssertFalse(sheet.ideas[0].done)
     }
 
+    func testSheetMoveToIdeasNoOpWhenAlreadyIdea() throws {
+        var sheet = Sheet.empty()
+        let idea = sheet.addIdea(text: "Stay")
+        try sheet.moveToIdeas(idea.id)
+        XCTAssertEqual(sheet.ideas.count, 1)
+    }
+
     func testSheetRemoveIdea() throws {
         var sheet = Sheet.empty()
         let idea = sheet.addIdea(text: "Someday")
         try sheet.removeIdea(idea.id)
         XCTAssertTrue(sheet.ideas.isEmpty)
+    }
+
+    func testSheetRemoveIdeaThrowsForBucketItem() throws {
+        var sheet = Sheet.empty()
+        let item = try sheet.addItem(to: mon, text: "Bucket task")
+        XCTAssertThrowsError(try sheet.removeIdea(item.id))
     }
 
     // MARK: - Sheet: validate
@@ -255,6 +298,15 @@ final class SheetTests: XCTestCase {
     }
 
     // MARK: - Sheet: Codable
+
+    func testItemDecodesWithoutADoneField() throws {
+        let json = """
+        { "id": "550E8400-E29B-41D4-A716-446655440000", "text": "No done field" }
+        """.data(using: .utf8)!
+        let item = try JSONDecoder().decode(Item.self, from: json)
+        XCTAssertEqual(item.text, "No done field")
+        XCTAssertFalse(item.done, "a missing done key must decode as false, not fail the decode")
+    }
 
     func testSheetCodableRoundTrip() throws {
         var sheet = Sheet.empty()
@@ -613,6 +665,71 @@ final class SheetTests: XCTestCase {
     }
 
     // MARK: - SheetViewModel
+
+    /// A view model over a throwaway store. The caller owns the directory and must remove it.
+    private func makeViewModel(_ tmp: URL) -> SheetViewModel {
+        SheetViewModel(store: FileStore(baseURL: tmp))
+    }
+
+    private func scratchDirectory() -> URL {
+        FileManager.default.temporaryDirectory
+            .appendingPathComponent("WeekSheetViewModel-\(UUID().uuidString)")
+    }
+
+    func testUndoRestoresADeletedItemToItsOwnBucket() throws {
+        let tmp = scratchDirectory()
+        defer { try? FileManager.default.removeItem(at: tmp) }
+        let viewModel = makeViewModel(tmp)
+
+        let tuesday = BucketKey("2026-09-22")!
+        let thursday = BucketKey("2026-09-24")!
+        // Delete the first of three: appending on undo would put it back in the wrong place, so
+        // this distinguishes "restored at its position" from "restored into the bucket".
+        let a = try viewModel.sheet.addItem(to: tuesday, text: "A")
+        try viewModel.sheet.addItem(to: tuesday, text: "B")
+        try viewModel.sheet.addItem(to: tuesday, text: "C")
+        try viewModel.sheet.addItem(to: thursday, text: "Elsewhere")
+
+        viewModel.deleteItem(a.id)
+        XCTAssertEqual(viewModel.sheet.buckets[tuesday]?.map(\.text), ["B", "C"])
+
+        viewModel.undo()
+        XCTAssertEqual(viewModel.sheet.buckets[tuesday]?.map(\.text), ["A", "B", "C"],
+                       "undo must restore to its own bucket, at its old position")
+        XCTAssertEqual(viewModel.sheet.buckets[thursday]?.map(\.text), ["Elsewhere"],
+                       "and must not land in some other bucket")
+
+        // Deleting the last item drops the bucket, so undo has to recreate it.
+        let friday = BucketKey("2026-09-25")!
+        let solo = try viewModel.sheet.addItem(to: friday, text: "Solo")
+        viewModel.deleteItem(solo.id)
+        XCTAssertNil(viewModel.sheet.buckets[friday], "an emptied bucket is dropped")
+
+        viewModel.undo()
+        XCTAssertEqual(viewModel.sheet.buckets[friday]?.map(\.text), ["Solo"],
+                       "undo must recreate the bucket deleting emptied")
+    }
+
+    func testMovingToAFullBucketIsRefusedAndShakesIt() throws {
+        let tmp = scratchDirectory()
+        defer { try? FileManager.default.removeItem(at: tmp) }
+        let viewModel = makeViewModel(tmp)
+
+        let full = BucketKey("2026-09-22")!
+        let source = BucketKey("2026-09-23")!
+        try viewModel.sheet.addItem(to: full, text: "A")
+        try viewModel.sheet.addItem(to: full, text: "B")
+        try viewModel.sheet.addItem(to: full, text: "C")
+        let fourth = try viewModel.sheet.addItem(to: source, text: "D")
+
+        viewModel.moveItemToBucket(fourth.id, bucket: full, position: 0)
+
+        XCTAssertEqual(viewModel.sheet.buckets[full]?.map(\.text), ["A", "B", "C"],
+                       "a full bucket must refuse a fourth item")
+        XCTAssertEqual(viewModel.sheet.buckets[source]?.map(\.text), ["D"],
+                       "and the refused item must stay where it was")
+        XCTAssertEqual(viewModel.shakingBucket, full)
+    }
 
     func testTickMovesTheWindowWhenTheWeekRollsOver() {
         let tmp = FileManager.default.temporaryDirectory

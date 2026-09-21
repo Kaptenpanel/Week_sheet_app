@@ -124,9 +124,30 @@ final class FileStoreTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: historyDir.path))
     }
 
-    // MARK: - Migration refusals leave the file intact
+    // MARK: - A file we cannot interpret is quarantined, not overwritten
 
-    func testLoadLeavesTheFileIntactWhenWeekStartIsUnparseable() throws {
+    /// Asserts the original bytes survived under exactly one quarantine name, and that `week.json`
+    /// is gone — the caller degrades to an empty sheet, so anything left at that path would be
+    /// saved over by the user's first edit.
+    private func assertQuarantined(_ original: Data,
+                                   file: StaticString = #filePath,
+                                   line: UInt = #line) throws {
+        XCTAssertFalse(
+            FileManager.default.fileExists(atPath: tmpDir.appendingPathComponent("week.json").path),
+            "week.json must be moved aside, or the first save overwrites it",
+            file: file, line: line
+        )
+        let quarantined = try FileManager.default
+            .contentsOfDirectory(at: tmpDir, includingPropertiesForKeys: nil)
+            .filter { $0.lastPathComponent.hasPrefix("week-unreadable-") }
+        XCTAssertEqual(quarantined.count, 1, "expected exactly one quarantined file",
+                       file: file, line: line)
+        XCTAssertEqual(try quarantined.first.map { try Data(contentsOf: $0) }, original,
+                       "the quarantined file must be byte-identical to what we could not read",
+                       file: file, line: line)
+    }
+
+    func testLoadQuarantinesAFileWhoseWeekStartIsUnparseable() throws {
         let bad = """
         {
             "weekStart": "not-a-date",
@@ -139,11 +160,10 @@ final class FileStoreTests: XCTestCase {
 
         XCTAssertThrowsError(try store.load())
 
-        let after = try Data(contentsOf: tmpDir.appendingPathComponent("week.json"))
-        XCTAssertEqual(after, bad, "a rejected migration must leave week.json byte-identical")
+        try assertQuarantined(bad)
     }
 
-    func testLoadLeavesTheFileIntactWhenWeekStartIsNotAMonday() throws {
+    func testLoadQuarantinesAFileWhoseWeekStartIsNotAMonday() throws {
         // 2026-09-22 is a Tuesday, so fri and wknd would collide.
         let bad = """
         {
@@ -157,18 +177,33 @@ final class FileStoreTests: XCTestCase {
 
         XCTAssertThrowsError(try store.load())
 
-        let after = try Data(contentsOf: tmpDir.appendingPathComponent("week.json"))
-        XCTAssertEqual(after, bad)
+        try assertQuarantined(bad)
     }
 
-    func testLoadThrowsOnMalformedJSONWithoutWriting() throws {
+    func testLoadQuarantinesMalformedJSON() throws {
         let garbage = "this is not json at all".data(using: .utf8)!
         try writeRawFile(garbage)
 
         XCTAssertThrowsError(try store.load())
 
-        let after = try Data(contentsOf: tmpDir.appendingPathComponent("week.json"))
-        XCTAssertEqual(after, garbage, "an unreadable file must be left alone, not replaced")
+        try assertQuarantined(garbage)
+    }
+
+    func testASecondUnreadableFileDoesNotClobberTheFirstQuarantine() throws {
+        let first = "not json, take one".data(using: .utf8)!
+        try writeRawFile(first)
+        XCTAssertThrowsError(try store.load())
+
+        let second = "not json, take two".data(using: .utf8)!
+        try writeRawFile(second)
+        XCTAssertThrowsError(try store.load())
+
+        let quarantined = try FileManager.default
+            .contentsOfDirectory(at: tmpDir, includingPropertiesForKeys: nil)
+            .filter { $0.lastPathComponent.hasPrefix("week-unreadable-") }
+        XCTAssertEqual(quarantined.count, 2, "the second failure must not overwrite the first")
+        let contents = Set(try quarantined.map { try Data(contentsOf: $0) })
+        XCTAssertEqual(contents, Set([first, second]))
     }
 
     func testLoadTreatsAnEmptyObjectAsAnEmptySheetWithoutWriting() throws {
