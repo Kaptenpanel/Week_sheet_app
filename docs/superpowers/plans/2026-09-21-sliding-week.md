@@ -1244,7 +1244,7 @@ Converting the old `week.json` in its own file, so it can be deleted whole once 
 
 **Interfaces:**
 - Consumes: `Item`, `BucketKey`, `Sheet`, `Week.parseDate`.
-- Produces: `LegacyWeek: Decodable` (internal) with `toSheet() -> Sheet`.
+- Produces: `LegacyWeek: Decodable` (internal) with `toSheet() throws -> Sheet`. It throws rather than degrading, because Task 6's caller writes the result back over `week.json`: a file we cannot interpret must abort the migration and leave the original on disk. Task 6's call site already spells `try`, so it needs no change, and Task 7's `(try? store.loadAndPrune()) ?? .empty()` degrades to an empty in-memory sheet without ever reaching `save()`.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -1321,6 +1321,58 @@ Append to `Tests/WeekSheetTests/WeekTests.swift`:
         XCTAssertTrue(sheet.buckets.isEmpty)
         XCTAssertTrue(sheet.ideas.isEmpty)
     }
+
+    func testLegacyUnparseableWeekStartThrows() {
+        let json = """
+        {
+            "weekStart": "not-a-date",
+            "days": { "mon": [{ "id": "550E8400-E29B-41D4-A716-446655440001", "text": "Precious", "done": false }] },
+            "ideas": [],
+            "reminder": "Keep me"
+        }
+        """.data(using: .utf8)!
+        let legacy = try! JSONDecoder().decode(LegacyWeek.self, from: json)
+        XCTAssertThrowsError(try legacy.toSheet(), "a file we cannot date must abort the migration, not return an empty sheet the caller would write back")
+    }
+
+    func testLegacyNonMondayWeekStartThrows() throws {
+        // 2026-09-22 is a Tuesday. With that start, `fri` and `wknd` would both resolve to
+        // Saturday 2026-09-26 and merge.
+        let json = """
+        {
+            "weekStart": "2026-09-22",
+            "days": {
+                "fri": [{ "id": "550E8400-E29B-41D4-A716-446655440002", "text": "Friday", "done": false }],
+                "wknd": [{ "id": "550E8400-E29B-41D4-A716-446655440003", "text": "Weekend", "done": false }]
+            },
+            "ideas": [],
+            "reminder": ""
+        }
+        """.data(using: .utf8)!
+        let legacy = try JSONDecoder().decode(LegacyWeek.self, from: json)
+        XCTAssertThrowsError(try legacy.toSheet())
+    }
+
+    func testLegacyOverCapDayOverflowsToIdeas() throws {
+        // A well-formed file can still hold more than three items in a day. `validate()` moves the
+        // excess to ideas, in reverse order because it pops from the end, and clears `done` on them.
+        let items = (0..<5).map {
+            "{ \"id\": \"550E8400-E29B-41D4-A71644665544000\($0)\", \"text\": \"Item \($0)\", \"done\": true }"
+        }.joined(separator: ", ")
+        let json = """
+        {
+            "weekStart": "2026-09-21",
+            "days": { "mon": [\(items)] },
+            "ideas": [],
+            "reminder": ""
+        }
+        """.data(using: .utf8)!
+        let sheet = try JSONDecoder().decode(LegacyWeek.self, from: json).toSheet()
+
+        XCTAssertEqual(sheet.buckets[BucketKey("2026-09-21")!]?.count, 3)
+        XCTAssertEqual(sheet.ideas.map(\.text), ["Item 4", "Item 3"])
+        XCTAssertTrue(sheet.ideas.allSatisfy { !$0.done }, "validate() clears done on overflowed items")
+    }
 ```
 
 - [ ] **Step 2: Run them and verify they fail**
@@ -1364,9 +1416,25 @@ struct LegacyWeek: Decodable {
         "mon": 0, "tue": 1, "wed": 2, "thu": 3, "fri": 4, "wknd": 5
     ]
 
-    func toSheet() -> Sheet {
-        guard let monday = Week.parseDate(weekStart) else { return .empty() }
-        let cal = Calendar.current
+    /// Throws rather than returning a partial or empty sheet: the caller writes the result back
+    /// over `week.json`, so a file we cannot interpret must abort the migration and leave the
+    /// original untouched. `weekStart` was always a Monday when the old app wrote it, and the
+    /// offset table is only collision-free if it still is.
+    func toSheet() throws -> Sheet {
+        guard let monday = Week.parseDate(weekStart) else {
+            throw DecodingError.dataCorrupted(.init(
+                codingPath: [],
+                debugDescription: "weekStart is not an ISO yyyy-MM-dd date: \(weekStart)"
+            ))
+        }
+        var cal = Calendar.current
+        cal.firstWeekday = 2
+        guard cal.component(.weekday, from: monday) == 2 else {
+            throw DecodingError.dataCorrupted(.init(
+                codingPath: [],
+                debugDescription: "weekStart is not a Monday: \(weekStart)"
+            ))
+        }
 
         var buckets: [BucketKey: [Item]] = [:]
         for (day, items) in days {
@@ -2064,7 +2132,9 @@ Stop and fix before committing if any of these differ.
 
 - [ ] **Step 11: Update the code-shape note**
 
-In `docs/CLAUDE.md`, replace the `Code shape` bullet that names `Week.swift` so it names the current files:
+In `docs/CLAUDE.md`, first fix the `What this is` paragraph, which still lists a feature that no longer exists. Replace "one 'New Ideas' inbox, one Reminder line, one Notes box" with "one 'New Ideas' inbox, one Weekly Focus line". Task 1 deleted the Notes box and Task 10 renames Reminder, so leaving this sentence would have the project's own instruction file describing two things that are gone.
+
+Then replace the `Code shape` bullet that names `Week.swift` so it names the current files:
 
 ```markdown
 - `Sheet.swift` (model), `LegacyMigration.swift`, `FileStore.swift`, `WindowController.swift`, `StatusItem.swift`, `SheetView.swift` + small subviews. Resist creating more files than the feature needs.
