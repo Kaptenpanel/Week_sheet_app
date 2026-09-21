@@ -2486,21 +2486,35 @@ Expected: PASS — `focus(for:)` already keys off the anchor. This test pins tha
 
 - [ ] **Step 3: Rename in the view model**
 
-In `Sources/WeekSheet/SheetView.swift`, rename `editingReminder` to `editingFocus` throughout `SheetViewModel` — the declaration, `startEditingReminder`, `cancelEditing`, and the key handler's guard and its comment:
+In `Sources/WeekSheet/SheetView.swift`, rename `editingReminder` to `editingFocus` throughout `SheetViewModel` — the declaration, `startEditingReminder`, `cancelEditing`, and the key handler's guard and its comment.
+
+**This is a rename, not a rewrite.** Task 8 added `editingReminderAnchor` to fix a real bug: `updateReminder` used to read `anchor` at commit time, so typing in the field, navigating to another week, then pressing Return attributed the text to the week you navigated *to* and overwrote that week's line. Carry that property through the rename as `editingFocusAnchor`. Do not restore `for: anchor`.
 
 ```swift
     @Published var editingFocus = false
+
+    /// The week the focus line was opened for. `updateFocus` must not read `anchor` at commit
+    /// time: navigation can move it while the field is still open, which would attribute the text
+    /// to a week the user was never looking at and overwrite that week's line.
+    private var editingFocusAnchor: Date?
 ```
 
 ```swift
-    func startEditingFocus() { editingFocus = true; editingID = nil; selectedID = nil; addingBucket = nil; addingIdea = false }
+    func startEditingFocus() {
+        editingFocus = true
+        editingFocusAnchor = anchor
+        editingID = nil; selectedID = nil; addingBucket = nil; addingIdea = false
+    }
 
     func updateFocus(_ text: String) {
         editingFocus = false
-        sheet.setFocus(text.trimmingCharacters(in: .whitespaces), for: anchor)
+        sheet.setFocus(text.trimmingCharacters(in: .whitespaces), for: editingFocusAnchor ?? anchor)
+        editingFocusAnchor = nil
         save()
     }
 ```
+
+`cancelEditing()` clears `editingFocusAnchor` alongside `editingFocus`. Task 8's regression test for this behaviour will need its identifiers renamed too — it must keep asserting that the text lands on the week the field was opened for, not the week now on screen.
 
 ```swift
             // The focus line gets typed keys (incl. Space); Esc still leaves edit mode.
