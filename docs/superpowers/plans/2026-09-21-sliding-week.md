@@ -1674,6 +1674,7 @@ The risk task. It rewrites every mutation path in `SheetView` and deletes `Week`
 - Rename: `Tests/WeekSheetTests/WeekTests.swift` → `Tests/WeekSheetTests/SheetTests.swift`
 - Modify: `Sources/WeekSheet/FileStore.swift` (drop the `Week` methods, rename the `Sheet` ones)
 - Modify: `Tests/WeekSheetTests/FileStoreTests.swift` (drop the `Week` and history tests)
+- Modify: `Sources/WeekSheetApp/main.swift` (delete its `_ = try? store.loadAndPrune()` line)
 - Modify: `docs/CLAUDE.md`
 
 **Interfaces:**
@@ -1725,7 +1726,11 @@ Rename the class to `SheetTests`. Delete every test that exercises the old model
 
 In `Tests/WeekSheetTests/FileStoreTests.swift`, delete `testLoadReturnsEmptyWhenNoFile`, `testSaveAndLoad`, `testLoadValidatesOverflow`, `testLoadAndResetNotNeeded`, `testLoadAndResetPerformsReset`, `testResetCreatesHistoryFile`, and `testPruneKeepsOnly8`. Replace every `Week.parseDate` with `Sheet.parseDate` and every `loadSheet` / `loadSheetAndPrune` with `load` / `loadAndPrune`.
 
-- [ ] **Step 3: Strip `FileStore` down to the `Sheet` API**
+- [ ] **Step 3: Strip `FileStore` down to the `Sheet` API, and drop the app's eager load**
+
+`Sources/WeekSheetApp/main.swift` calls `store.loadAndResetIfNeeded()` in `applicationDidFinishLaunching`, so the build cannot compile once that method goes. Delete the line rather than translating it: its result was already discarded, the very next statement constructs `WindowController(store:)` whose `SheetViewModel(store:)` performs the same load, and `FileStore` holds no cache. The line existed only to force the Monday reset before the window appeared, which is the thing this plan removes. Translating it to `loadAndPrune` would buy two file reads and two JSON decodes on every launch for no benefit.
+
+
 
 In `Sources/WeekSheet/FileStore.swift` delete `load() throws -> Week`, `save(_ week: Week)`, `loadAndResetIfNeeded`, `archiveToHistory`, `pruneHistory`, the `historyURL` property, and the `maxHistoryFiles` constant. Then rename `loadSheet` to `load` and `loadSheetAndPrune` to `loadAndPrune`.
 
