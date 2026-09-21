@@ -1674,7 +1674,7 @@ The risk task. It rewrites every mutation path in `SheetView` and deletes `Week`
 - Rename: `Tests/WeekSheetTests/WeekTests.swift` → `Tests/WeekSheetTests/SheetTests.swift`
 - Modify: `Sources/WeekSheet/FileStore.swift` (drop the `Week` methods, rename the `Sheet` ones)
 - Modify: `Tests/WeekSheetTests/FileStoreTests.swift` (drop the `Week` and history tests)
-- Modify: `Sources/WeekSheetApp/main.swift` (delete its `_ = try? store.loadAndPrune()` line)
+- Modify: `Sources/WeekSheetApp/main.swift` (delete its `_ = try? store.loadAndResetIfNeeded()` line)
 - Modify: `docs/CLAUDE.md`
 
 **Interfaces:**
