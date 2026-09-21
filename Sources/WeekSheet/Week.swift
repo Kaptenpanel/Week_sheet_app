@@ -23,6 +23,125 @@ public enum Day: String, CaseIterable, Hashable, Codable {
     case mon, tue, wed, thu, fri, wknd
 }
 
+/// One column of the sheet. A weekday bucket is keyed by its own date; Saturday and Sunday
+/// share one bucket, keyed by the Saturday. Constructing a key is the only way to apply that
+/// rule, so nothing downstream can accidentally address a Sunday.
+public struct BucketKey: Hashable, Comparable, Codable {
+    /// ISO "yyyy-MM-dd", local time.
+    public let id: String
+
+    private init(unchecked id: String) { self.id = id }
+
+    public init?(_ id: String) {
+        guard let date = Week.parseDate(id) else { return nil }
+        self = Self.containing(date)
+    }
+
+    public static func containing(_ date: Date) -> BucketKey {
+        let cal = Calendar.current
+        let day = cal.startOfDay(for: date)
+        // .weekday is 1 for Sunday and 7 for Saturday whatever firstWeekday is set to.
+        if cal.component(.weekday, from: day) == 1 {
+            return BucketKey(unchecked: Week.formatDate(cal.date(byAdding: .day, value: -1, to: day)!))
+        }
+        return BucketKey(unchecked: Week.formatDate(day))
+    }
+
+    /// The Monday of the week containing `date`. Used to key the weekly focus.
+    public static func monday(of date: Date) -> BucketKey {
+        var cal = Calendar.current
+        cal.firstWeekday = 2
+        let comps = cal.dateComponents([.yearForWeekOfYear, .weekOfYear], from: date)
+        return BucketKey(unchecked: Week.formatDate(cal.date(from: comps)!))
+    }
+
+    public var isWeekend: Bool { Calendar.current.component(.weekday, from: firstDate) == 7 }
+
+    public var firstDate: Date { Week.parseDate(id)! }
+
+    /// The last calendar day this bucket covers — the Sunday, for a weekend bucket.
+    public var lastDate: Date {
+        isWeekend ? Calendar.current.date(byAdding: .day, value: 1, to: firstDate)! : firstDate
+    }
+
+    /// Steps by whole buckets, not days, so Friday +1 is the weekend and the weekend +1 is Monday.
+    public func stepped(by n: Int) -> BucketKey {
+        var result = self
+        var remaining = n
+        while remaining > 0 { result = result.next; remaining -= 1 }
+        while remaining < 0 { result = result.previous; remaining += 1 }
+        return result
+    }
+
+    private var next: BucketKey {
+        // Leaving the weekend bucket means clearing both of its days.
+        let step = isWeekend ? 2 : 1
+        return Self.containing(Calendar.current.date(byAdding: .day, value: step, to: firstDate)!)
+    }
+
+    private var previous: BucketKey {
+        // Monday steps back onto Sunday, which `containing` snaps to its Saturday.
+        Self.containing(Calendar.current.date(byAdding: .day, value: -1, to: firstDate)!)
+    }
+
+    // MARK: Labels
+
+    /// Column header: MON…FRI, or WKND. Matches the strings the old `Day` rawValues produced.
+    public var headerLabel: String {
+        if isWeekend { return "WKND" }
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.dateFormat = "EEE"
+        return f.string(from: firstDate).uppercased()
+    }
+
+    /// Vertical layout's label: "21", or "26/27" for a weekend.
+    public var compactDateLabel: String {
+        let cal = Calendar.current
+        if isWeekend {
+            return "\(cal.component(.day, from: firstDate))/\(cal.component(.day, from: lastDate))"
+        }
+        return String(format: "%02d", cal.component(.day, from: firstDate))
+    }
+
+    /// Horizontal layout's label: "21 SEP", or "26-27 SEP" for a weekend. The month is the
+    /// Saturday's, so a weekend spanning a month boundary reads "31-1 OCT" — as it did before.
+    public var wideDateLabel: String {
+        let cal = Calendar.current
+        let monthF = DateFormatter()
+        monthF.locale = Locale(identifier: "en_US_POSIX")
+        monthF.dateFormat = "MMM"
+        if isWeekend {
+            let month = monthF.string(from: firstDate).uppercased()
+            return "\(cal.component(.day, from: firstDate))-\(cal.component(.day, from: lastDate)) \(month)"
+        }
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.dateFormat = "d MMM"
+        return f.string(from: firstDate).uppercased()
+    }
+
+    // MARK: Conformances
+
+    public static func < (lhs: BucketKey, rhs: BucketKey) -> Bool { lhs.id < rhs.id }
+
+    public init(from decoder: Decoder) throws {
+        let raw = try decoder.singleValueContainer().decode(String.self)
+        guard let key = BucketKey(raw) else {
+            throw DecodingError.dataCorrupted(.init(
+                codingPath: decoder.codingPath,
+                debugDescription: "Not an ISO yyyy-MM-dd date: \(raw)"
+            ))
+        }
+        self = key
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        try container.encode(id)
+    }
+}
+
 public enum WeekError: Error, Equatable {
     case dayFull(Day)
     case itemNotFound(UUID)

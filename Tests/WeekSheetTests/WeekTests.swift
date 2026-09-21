@@ -302,4 +302,109 @@ final class WeekTests: XCTestCase {
         let sun = Week.parseDate("2026-09-06")!
         XCTAssertEqual(Week.mondayOfWeek(containing: sun), "2026-08-31")
     }
+
+    // MARK: - BucketKey
+
+    func testWeekdayBucketKeysItself() {
+        let tue = Week.parseDate("2026-09-22")!
+        XCTAssertEqual(BucketKey.containing(tue).id, "2026-09-22")
+        XCTAssertFalse(BucketKey.containing(tue).isWeekend)
+    }
+
+    func testSaturdayIsAWeekendBucket() {
+        let sat = Week.parseDate("2026-09-26")!
+        let key = BucketKey.containing(sat)
+        XCTAssertEqual(key.id, "2026-09-26")
+        XCTAssertTrue(key.isWeekend)
+    }
+
+    func testSundaySnapsBackToItsSaturday() {
+        let sun = Week.parseDate("2026-09-27")!
+        let key = BucketKey.containing(sun)
+        XCTAssertEqual(key.id, "2026-09-26")
+        XCTAssertTrue(key.isWeekend)
+    }
+
+    func testWeekendBucketSpansTwoDays() {
+        let key = BucketKey("2026-09-26")!
+        XCTAssertEqual(key.firstDate, Week.parseDate("2026-09-26")!)
+        XCTAssertEqual(key.lastDate, Week.parseDate("2026-09-27")!)
+    }
+
+    func testWeekdayBucketSpansOneDay() {
+        let key = BucketKey("2026-09-22")!
+        XCTAssertEqual(key.firstDate, key.lastDate)
+    }
+
+    func testInitRejectsNonDate() {
+        XCTAssertNil(BucketKey("not-a-date"))
+        XCTAssertNil(BucketKey(""))
+    }
+
+    func testInitSnapsASundayString() {
+        XCTAssertEqual(BucketKey("2026-09-27")?.id, "2026-09-26")
+    }
+
+    func testMondayOfAnchor() {
+        XCTAssertEqual(BucketKey.monday(of: Week.parseDate("2026-09-23")!).id, "2026-09-21")
+        XCTAssertEqual(BucketKey.monday(of: Week.parseDate("2026-09-21")!).id, "2026-09-21")
+        XCTAssertEqual(BucketKey.monday(of: Week.parseDate("2026-09-27")!).id, "2026-09-21")
+    }
+
+    func testSteppedForwardFridayToWeekend() {
+        XCTAssertEqual(BucketKey("2026-09-25")!.stepped(by: 1).id, "2026-09-26")
+    }
+
+    func testSteppedForwardWeekendSkipsToMonday() {
+        XCTAssertEqual(BucketKey("2026-09-26")!.stepped(by: 1).id, "2026-09-28")
+    }
+
+    func testSteppedBackMondayLandsOnWeekend() {
+        XCTAssertEqual(BucketKey("2026-09-21")!.stepped(by: -1).id, "2026-09-19")
+    }
+
+    func testSteppedBackWeekendLandsOnFriday() {
+        XCTAssertEqual(BucketKey("2026-09-19")!.stepped(by: -1).id, "2026-09-18")
+    }
+
+    func testSteppedZeroIsIdentity() {
+        let key = BucketKey("2026-09-22")!
+        XCTAssertEqual(key.stepped(by: 0), key)
+    }
+
+    func testSixStepsForwardIsOneWeek() {
+        XCTAssertEqual(BucketKey("2026-09-21")!.stepped(by: 6).id, "2026-09-28")
+    }
+
+    func testSteppedRoundTrips() {
+        let key = BucketKey("2026-09-19")!
+        XCTAssertEqual(key.stepped(by: 4).stepped(by: -4), key)
+    }
+
+    func testHeaderLabels() {
+        XCTAssertEqual(BucketKey("2026-09-21")!.headerLabel, "MON")
+        XCTAssertEqual(BucketKey("2026-09-25")!.headerLabel, "FRI")
+        XCTAssertEqual(BucketKey("2026-09-26")!.headerLabel, "WKND")
+    }
+
+    func testCompactDateLabels() {
+        XCTAssertEqual(BucketKey("2026-09-21")!.compactDateLabel, "21")
+        XCTAssertEqual(BucketKey("2026-09-26")!.compactDateLabel, "26/27")
+    }
+
+    func testWideDateLabels() {
+        XCTAssertEqual(BucketKey("2026-09-21")!.wideDateLabel, "21 SEP")
+        XCTAssertEqual(BucketKey("2026-09-26")!.wideDateLabel, "26-27 SEP")
+    }
+
+    func testComparableIsChronological() {
+        XCTAssertTrue(BucketKey("2026-09-21")! < BucketKey("2026-09-22")!)
+    }
+
+    func testCodableAsBareString() throws {
+        let key = BucketKey("2026-09-26")!
+        let data = try JSONEncoder().encode(key)
+        XCTAssertEqual(String(data: data, encoding: .utf8), "\"2026-09-26\"")
+        XCTAssertEqual(try JSONDecoder().decode(BucketKey.self, from: data), key)
+    }
 }
