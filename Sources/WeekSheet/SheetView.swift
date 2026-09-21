@@ -29,37 +29,44 @@ private let italicBody = Font.system(size: 11, weight: .regular, design: .defaul
 // MARK: - SheetViewModel
 
 public final class SheetViewModel: ObservableObject {
-    @Published var week: Week
+    @Published var sheet: Sheet
     @Published var isEditMode = false
     @Published var selectedID: UUID?
     @Published var editingID: UUID?
-    @Published var addingDay: Day?
+    @Published var addingBucket: BucketKey?
     @Published var addingIdea = false
     @Published var editingReminder = false
     @Published private(set) var undoState: UndoInfo?
-    @Published var shakingDay: Day?
+    @Published var shakingBucket: BucketKey?
     @Published var isHorizontalMode: Bool
+    /// Which six buckets to render. Week mode until Task 8 adds the toggle.
+    @Published var windowMode: WindowMode = .week
+    /// The date the window is built around. View state — never persisted, so a relaunch
+    /// always opens on today.
+    @Published var anchor = Date()
     /// Start of the current day. Published so the sheet redraws when the date rolls over.
     @Published private(set) var today = Calendar.current.startOfDay(for: Date())
 
     let store: FileStore
     private var eventMonitor: Any?
     private var undoTimer: Timer?
-    private var resetTimer: Timer?
+    private var tickTimer: Timer?
     private var wakeObserver: Any?
 
-    struct UndoInfo { let item: Item; let day: Day?; let position: Int }
+    struct UndoInfo { let item: Item; let bucket: BucketKey?; let position: Int }
+
+    var window: [BucketKey] { Sheet.window(anchor: anchor, mode: windowMode) }
 
     public init(store: FileStore) {
         self.store = store
         self.isHorizontalMode = UserDefaults.standard.bool(forKey: "horizontalMode")
-        self.week = (try? store.loadAndResetIfNeeded()) ?? Week.empty(weekStart: Week.mondayOfWeek(containing: Date()))
+        self.sheet = (try? store.loadAndPrune()) ?? .empty()
         let timer = Timer(timeInterval: 60, repeats: true) { [weak self] _ in
             self?.tick()
         }
         // .common so the tick still fires while a menu or window drag runs a tracking loop.
         RunLoop.main.add(timer, forMode: .common)
-        resetTimer = timer
+        tickTimer = timer
         // Timers are coalesced across sleep; catch up as soon as the machine wakes.
         wakeObserver = NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.didWakeNotification,
@@ -74,28 +81,29 @@ public final class SheetViewModel: ObservableObject {
         if let m = eventMonitor { NSEvent.removeMonitor(m) }
         if let o = wakeObserver { NSWorkspace.shared.notificationCenter.removeObserver(o) }
         undoTimer?.invalidate()
-        resetTimer?.invalidate()
+        tickTimer?.invalidate()
     }
 
-    private func save() { try? store.save(week) }
+    private func save() { try? store.save(sheet) }
 
-    /// Rolls the highlighted day forward at midnight and resets the sheet on Monday.
+    /// Rolls the highlighted day forward at midnight and drops buckets past the horizon.
     func tick() {
         let start = Calendar.current.startOfDay(for: Date())
         if start != today { today = start }
-        checkReset()
+        pruneIfNeeded()
     }
 
-    func checkReset() {
-        guard week.needsReset() else { return }
-        if let w = try? store.loadAndResetIfNeeded() { week = w }
+    func pruneIfNeeded() {
+        let countBefore = sheet.buckets.count
+        sheet.prune()
+        if sheet.buckets.count != countBefore { save() }
     }
 
-    func addItem(to day: Day, text: String) {
-        addingDay = nil
+    func addItem(to key: BucketKey, text: String) {
+        addingBucket = nil
         let t = text.trimmingCharacters(in: .whitespaces)
         guard !t.isEmpty else { return }
-        _ = try? week.addItem(to: day, text: t)
+        _ = try? sheet.addItem(to: key, text: t)
         save()
     }
 
@@ -103,35 +111,35 @@ public final class SheetViewModel: ObservableObject {
         addingIdea = false
         let t = text.trimmingCharacters(in: .whitespaces)
         guard !t.isEmpty else { return }
-        week.addIdea(text: t)
+        sheet.addIdea(text: t)
         save()
     }
 
     func toggleDone() {
         guard let id = selectedID else { return }
-        if week.ideas.contains(where: { $0.id == id }) { return }
-        try? week.toggleDone(id)
+        if sheet.ideas.contains(where: { $0.id == id }) { return }
+        try? sheet.toggleDone(id)
         save()
     }
 
     func deleteItem(_ id: UUID) {
         var foundItem: Item?
-        var foundDay: Day?
+        var foundBucket: BucketKey?
         var foundPos = 0
-        for day in Day.allCases {
-            if let idx = week.days[day]?.firstIndex(where: { $0.id == id }) {
-                foundItem = week.days[day]![idx]; foundDay = day; foundPos = idx; break
+        for key in Array(sheet.buckets.keys) {
+            if let idx = sheet.buckets[key]?.firstIndex(where: { $0.id == id }) {
+                foundItem = sheet.buckets[key]![idx]; foundBucket = key; foundPos = idx; break
             }
         }
-        if foundItem == nil, let idx = week.ideas.firstIndex(where: { $0.id == id }) {
-            foundItem = week.ideas[idx]; foundPos = idx
+        if foundItem == nil, let idx = sheet.ideas.firstIndex(where: { $0.id == id }) {
+            foundItem = sheet.ideas[idx]; foundPos = idx
         }
         guard let item = foundItem else { return }
-        try? week.deleteItem(id)
+        try? sheet.deleteItem(id)
         if selectedID == id { selectedID = nil }
         save()
         undoTimer?.invalidate()
-        undoState = UndoInfo(item: item, day: foundDay, position: foundPos)
+        undoState = UndoInfo(item: item, bucket: foundBucket, position: foundPos)
         undoTimer = Timer.scheduledTimer(withTimeInterval: 2, repeats: false) { [weak self] _ in
             DispatchQueue.main.async { self?.undoState = nil }
         }
@@ -141,15 +149,15 @@ public final class SheetViewModel: ObservableObject {
         guard let info = undoState else { return }
         undoTimer?.invalidate()
         undoState = nil
-        if let day = info.day {
-            let items = week.days[day, default: []]
-            if items.count < Week.maxItemsPerDay {
-                week.days[day, default: []].insert(info.item, at: min(info.position, items.count))
+        if let bucket = info.bucket {
+            let items = sheet.buckets[bucket, default: []]
+            if items.count < Sheet.maxItemsPerDay {
+                sheet.buckets[bucket, default: []].insert(info.item, at: min(info.position, items.count))
             } else {
-                week.ideas.append(info.item)
+                sheet.ideas.append(info.item)
             }
         } else {
-            week.ideas.insert(info.item, at: min(info.position, week.ideas.count))
+            sheet.ideas.insert(info.item, at: min(info.position, sheet.ideas.count))
         }
         save()
     }
@@ -158,58 +166,58 @@ public final class SheetViewModel: ObservableObject {
         editingID = nil
         let t = newText.trimmingCharacters(in: .whitespaces)
         guard !t.isEmpty else { return }
-        for day in Day.allCases {
-            if let idx = week.days[day]?.firstIndex(where: { $0.id == id }) {
-                week.days[day]![idx].text = t; save(); return
+        for key in Array(sheet.buckets.keys) {
+            if let idx = sheet.buckets[key]?.firstIndex(where: { $0.id == id }) {
+                sheet.buckets[key]![idx].text = t; save(); return
             }
         }
-        if let idx = week.ideas.firstIndex(where: { $0.id == id }) {
-            week.ideas[idx].text = t; save()
+        if let idx = sheet.ideas.firstIndex(where: { $0.id == id }) {
+            sheet.ideas[idx].text = t; save()
         }
     }
 
     func select(_ id: UUID?) {
         if editingID != nil { editingID = nil }
         selectedID = id
-        if addingDay != nil { addingDay = nil }
+        if addingBucket != nil { addingBucket = nil }
         if addingIdea { addingIdea = false }
     }
 
-    func startAddingToDay(_ day: Day) {
-        guard week.days[day, default: []].count < Week.maxItemsPerDay else { return }
-        addingDay = day; editingID = nil; selectedID = nil
+    func startAddingToBucket(_ key: BucketKey) {
+        guard sheet.buckets[key, default: []].count < Sheet.maxItemsPerDay else { return }
+        addingBucket = key; editingID = nil; selectedID = nil
     }
 
     func startAddingIdea() { addingIdea = true; editingID = nil; selectedID = nil }
 
     func startEditing(_ id: UUID) { editingID = id; selectedID = id }
 
-    func startEditingReminder() { editingReminder = true; editingID = nil; selectedID = nil; addingDay = nil; addingIdea = false }
+    func startEditingReminder() { editingReminder = true; editingID = nil; selectedID = nil; addingBucket = nil; addingIdea = false }
 
     func updateReminder(_ text: String) {
         editingReminder = false
-        week.reminder = text.trimmingCharacters(in: .whitespaces)
+        sheet.setFocus(text.trimmingCharacters(in: .whitespaces), for: anchor)
         save()
     }
 
-    func moveItemToDay(_ id: UUID, day: Day, position: Int) {
+    func moveItemToBucket(_ id: UUID, bucket: BucketKey, position: Int) {
         do {
-            try week.moveItem(id, to: day, at: position)
+            try sheet.moveItem(id, to: bucket, at: position)
             save()
-        } catch WeekError.dayFull {
-            shakingDay = day
+        } catch SheetError.dayFull {
+            shakingBucket = bucket
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
-                if self?.shakingDay == day { self?.shakingDay = nil }
+                if self?.shakingBucket == bucket { self?.shakingBucket = nil }
             }
         } catch {}
     }
 
     func moveItemToIdeas(_ id: UUID) {
-        try? week.moveToIdeas(id)
+        try? sheet.moveToIdeas(id)
         save()
     }
 
-    func cancelEditing() { editingID = nil; addingDay = nil; addingIdea = false; editingReminder = false; selectedID = nil }
+    func cancelEditing() { editingID = nil; addingBucket = nil; addingIdea = false; editingReminder = false; selectedID = nil }
 
     func toggleLayoutMode() {
         isHorizontalMode.toggle()
@@ -222,7 +230,7 @@ public final class SheetViewModel: ObservableObject {
         guard eventMonitor == nil else { return }
         eventMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard let self else { return event }
-            if self.editingID != nil || self.addingDay != nil || self.addingIdea { return event }
+            if self.editingID != nil || self.addingBucket != nil || self.addingIdea { return event }
             // Reminder gets typed keys (incl. Space); Esc still leaves edit mode.
             if self.editingReminder && event.keyCode != 53 { return event }
             switch event.keyCode {
@@ -356,23 +364,23 @@ public struct SheetView: View {
 
     private var dayColumns: some View {
         HStack(alignment: .top, spacing: 0) {
-            ForEach(Day.allCases, id: \.self) { day in
-                dayColumn(day).frame(maxWidth: .infinity)
+            ForEach(viewModel.window, id: \.self) { key in
+                dayColumn(key).frame(maxWidth: .infinity)
             }
         }
     }
 
     @ViewBuilder
-    private func dayColumn(_ day: Day) -> some View {
-        let items = viewModel.week.days[day, default: []]
-        let isToday = (day == todayDay)
-        let isShaking = viewModel.shakingDay == day
+    private func dayColumn(_ key: BucketKey) -> some View {
+        let items = viewModel.sheet.buckets[key, default: []]
+        let isToday = (key == BucketKey.containing(viewModel.today))
+        let isShaking = viewModel.shakingBucket == key
 
         VStack(alignment: .leading, spacing: 0) {
             Rectangle().fill(isToday ? todayBar : Color.clear).frame(height: 2)
             HStack(alignment: .firstTextBaseline, spacing: 4) {
-                Text(day.rawValue.uppercased()).font(headerFont)
-                Text(dateLabelFor(day)).font(smallMono)
+                Text(key.headerLabel).font(headerFont)
+                Text(key.compactDateLabel).font(smallMono)
             }
             .foregroundColor(isToday ? todayGreen : .black.opacity(0.65))
             .padding(.vertical, 6).padding(.horizontal, 8)
@@ -391,22 +399,22 @@ public struct SheetView: View {
                         } else {
                             itemSlot(items[i])
                         }
-                    } else if viewModel.addingDay == day && i == items.count {
+                    } else if viewModel.addingBucket == key && i == items.count {
                         InlineTextField(
                             text: "",
-                            onCommit: { viewModel.addItem(to: day, text: $0) },
-                            onCancel: { viewModel.addingDay = nil }
+                            onCommit: { viewModel.addItem(to: key, text: $0) },
+                            onCancel: { viewModel.addingBucket = nil }
                         ).frame(height: 28)
                     } else {
                         Rectangle().fill(Color.clear).frame(height: 28)
                             .contentShape(Rectangle())
-                            .onTapGesture { viewModel.startAddingToDay(day) }
+                            .onTapGesture { viewModel.startAddingToBucket(key) }
                     }
                     Rectangle().fill(ruleColor).frame(height: 1)
                 }
                 .padding(.horizontal, 8)
                 .onDrop(of: [.text], isTargeted: nil) { providers in
-                    handleDrop(providers, to: day, at: i)
+                    handleDrop(providers, to: key, at: i)
                 }
             }
         }
@@ -414,12 +422,12 @@ public struct SheetView: View {
         .modifier(ShakeEffect(shaking: isShaking))
     }
 
-    private func handleDrop(_ providers: [NSItemProvider], to day: Day, at position: Int) -> Bool {
+    private func handleDrop(_ providers: [NSItemProvider], to key: BucketKey, at position: Int) -> Bool {
         guard viewModel.isEditMode else { return false }
         guard let provider = providers.first else { return false }
         provider.loadObject(ofClass: NSString.self) { string, _ in
             guard let uuidString = string as? String, let id = UUID(uuidString: uuidString) else { return }
-            DispatchQueue.main.async { self.viewModel.moveItemToDay(id, day: day, position: position) }
+            DispatchQueue.main.async { self.viewModel.moveItemToBucket(id, bucket: key, position: position) }
         }
         return true
     }
@@ -456,7 +464,7 @@ public struct SheetView: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
                 Text("NEW IDEAS").font(headerFont).foregroundColor(.black.opacity(0.6))
-                Text("\(viewModel.week.ideas.count)").font(smallMono).foregroundColor(labelDim)
+                Text("\(viewModel.sheet.ideas.count)").font(smallMono).foregroundColor(labelDim)
                 Spacer()
                 Text("+")
                     .font(.system(size: 13, weight: .medium, design: .monospaced))
@@ -468,7 +476,7 @@ public struct SheetView: View {
             }
 
             FlowLayout(spacing: 8) {
-                ForEach(viewModel.week.ideas) { idea in
+                ForEach(viewModel.sheet.ideas) { idea in
                     if viewModel.editingID == idea.id {
                         InlineTextField(
                             text: idea.text,
@@ -540,13 +548,13 @@ public struct SheetView: View {
         VStack(alignment: .leading, spacing: 6) {
             Text("REMINDER !").font(headerFont).foregroundColor(.black.opacity(0.6))
             ZStack(alignment: .leading) {
-                Text(viewModel.week.reminder.isEmpty ? " " : viewModel.week.reminder)
+                Text(viewModel.sheet.focus(for: viewModel.anchor).isEmpty ? " " : viewModel.sheet.focus(for: viewModel.anchor))
                     .font(bodyFont).foregroundColor(bodyText)
                     .frame(maxWidth: .infinity, minHeight: 16, alignment: .leading)
                     .opacity(viewModel.editingReminder ? 0 : 1)
                 if viewModel.editingReminder && viewModel.isEditMode {
                     InlineTextField(
-                        text: viewModel.week.reminder,
+                        text: viewModel.sheet.focus(for: viewModel.anchor),
                         onCommit: { viewModel.updateReminder($0) },
                         onCancel: { viewModel.editingReminder = false }
                     ).frame(maxWidth: .infinity)
@@ -567,25 +575,25 @@ public struct SheetView: View {
 
     private var dayRows: some View {
         VStack(spacing: 0) {
-            ForEach(Day.allCases, id: \.self) { day in
-                dayRow(day)
+            ForEach(viewModel.window, id: \.self) { key in
+                dayRow(key)
             }
         }
         .frame(maxWidth: .infinity)
     }
 
     @ViewBuilder
-    private func dayRow(_ day: Day) -> some View {
-        let items = viewModel.week.days[day, default: []]
-        let isToday = (day == todayDay)
-        let isShaking = viewModel.shakingDay == day
+    private func dayRow(_ key: BucketKey) -> some View {
+        let items = viewModel.sheet.buckets[key, default: []]
+        let isToday = (key == BucketKey.containing(viewModel.today))
+        let isShaking = viewModel.shakingBucket == key
 
         HStack(alignment: .top, spacing: 0) {
             Rectangle().fill(isToday ? todayBar : Color.clear).frame(width: 2)
 
             VStack(alignment: .leading, spacing: 0) {
-                Text(day.rawValue.uppercased()).font(headerFont)
-                Text(horizontalDateLabel(day)).font(smallMono)
+                Text(key.headerLabel).font(headerFont)
+                Text(key.wideDateLabel).font(smallMono)
             }
             .foregroundColor(isToday ? todayGreen : .black.opacity(0.65))
             .frame(width: 70, alignment: .leading)
@@ -606,21 +614,21 @@ public struct SheetView: View {
                             } else {
                                 itemSlot(items[i])
                             }
-                        } else if viewModel.addingDay == day && i == items.count {
+                        } else if viewModel.addingBucket == key && i == items.count {
                             InlineTextField(
                                 text: "",
-                                onCommit: { viewModel.addItem(to: day, text: $0) },
-                                onCancel: { viewModel.addingDay = nil }
+                                onCommit: { viewModel.addItem(to: key, text: $0) },
+                                onCancel: { viewModel.addingBucket = nil }
                             ).frame(height: 28)
                         } else {
                             Rectangle().fill(Color.clear).frame(height: 28)
                                 .contentShape(Rectangle())
-                                .onTapGesture { viewModel.startAddingToDay(day) }
+                                .onTapGesture { viewModel.startAddingToBucket(key) }
                         }
                         Rectangle().fill(ruleColor).frame(height: 1)
                     }
                     .onDrop(of: [.text], isTargeted: nil) { providers in
-                        handleDrop(providers, to: day, at: i)
+                        handleDrop(providers, to: key, at: i)
                     }
                 }
             }
@@ -642,35 +650,9 @@ public struct SheetView: View {
         HStack {
             Text("DRAG TO MOVE \u{00B7} SPACE = DONE \u{00B7} \u{232B} = DELETE \u{00B7} ESC = LEAVE")
             Spacer()
-            Text("3/DAY \u{00B7} RESETS MON 04:00")
+            Text("3/DAY \u{00B7} 7-DAY MEMORY")
         }
         .font(captionMono).foregroundColor(footerDim)
-    }
-
-    private func horizontalDateLabel(_ day: Day) -> String {
-        guard let s = weekStartDate else { return "" }
-        let cal = Calendar.current
-        let mf = DateFormatter()
-        mf.locale = Locale(identifier: "en_US_POSIX")
-        mf.dateFormat = "d MMM"
-        if day == .wknd {
-            let sat = cal.date(byAdding: .day, value: 5, to: s)!
-            let sun = cal.date(byAdding: .day, value: 6, to: s)!
-            let df = DateFormatter()
-            df.locale = Locale(identifier: "en_US_POSIX")
-            df.dateFormat = "d"
-            let monthF = DateFormatter()
-            monthF.locale = Locale(identifier: "en_US_POSIX")
-            monthF.dateFormat = "MMM"
-            return "\(df.string(from: sat))-\(df.string(from: sun)) \(monthF.string(from: sat).uppercased())"
-        }
-        let off: Int
-        switch day {
-        case .mon: off = 0; case .tue: off = 1; case .wed: off = 2
-        case .thu: off = 3; case .fri: off = 4; default: off = 0
-        }
-        let date = cal.date(byAdding: .day, value: off, to: s)!
-        return mf.string(from: date).uppercased()
     }
 
     // MARK: Footer
@@ -679,48 +661,21 @@ public struct SheetView: View {
         HStack {
             Text("CLICK A LINE \u{00B7} DRAG TO MOVE \u{00B7} SPACE = DONE \u{00B7} \u{232B} = DELETE \u{00B7} ESC = LEAVE")
             Spacer()
-            Text("3 PER DAY \u{00B7} RESETS MON 04:00")
+            Text("3 PER DAY \u{00B7} 7-DAY MEMORY")
         }
         .font(captionMono).foregroundColor(footerDim)
     }
 
     // MARK: Date helpers
 
-    private var weekStartDate: Date? { Week.parseDate(viewModel.week.weekStart) }
-
     private var dateRangeText: String {
-        guard let s = weekStartDate,
-              let e = Calendar.current.date(byAdding: .day, value: 6, to: s) else { return "" }
+        guard let first = viewModel.window.first, let last = viewModel.window.last else { return "" }
+        let s = first.firstDate, e = last.lastDate
         let df = DateFormatter(); df.locale = Locale(identifier: "en_US_POSIX"); df.dateFormat = "d"
         let mf = DateFormatter(); mf.locale = Locale(identifier: "en_US_POSIX"); mf.dateFormat = "MMM"
         let sm = mf.string(from: s).uppercased(), em = mf.string(from: e).uppercased()
         if sm == em { return "\(df.string(from: s)) \u{2013} \(df.string(from: e)) \(sm)" }
         return "\(df.string(from: s)) \(sm) \u{2013} \(df.string(from: e)) \(em)"
-    }
-
-    private func dateLabelFor(_ day: Day) -> String {
-        guard let s = weekStartDate else { return "" }
-        let cal = Calendar.current
-        if day == .wknd {
-            let sat = cal.date(byAdding: .day, value: 5, to: s)!
-            let sun = cal.date(byAdding: .day, value: 6, to: s)!
-            return "\(cal.component(.day, from: sat))/\(cal.component(.day, from: sun))"
-        }
-        let off: Int
-        switch day {
-        case .mon: off = 0; case .tue: off = 1; case .wed: off = 2
-        case .thu: off = 3; case .fri: off = 4; default: off = 0
-        }
-        return String(format: "%02d", cal.component(.day, from: cal.date(byAdding: .day, value: off, to: s)!))
-    }
-
-    private var todayDay: Day? {
-        guard let s = weekStartDate else { return nil }
-        let diff = Calendar.current.dateComponents([.day], from: Calendar.current.startOfDay(for: s), to: viewModel.today).day ?? -1
-        switch diff {
-        case 0: return .mon; case 1: return .tue; case 2: return .wed
-        case 3: return .thu; case 4: return .fri; case 5, 6: return .wknd; default: return nil
-        }
     }
 }
 
@@ -790,23 +745,26 @@ private struct FlowLayout: Layout {
 
 // MARK: - Mock data
 
-extension Week {
-    static let mock = Week(
-        weekStart: "2026-08-31",
-        days: [
-            .mon: [Item(text: "Ship spec v0.1", done: true), Item(text: "Call with Ana")],
-            .tue: [Item(text: "Rewrite onboarding copy")],
-            .wed: [Item(text: "Dentist, 14:30"), Item(text: "Invoice August"), Item(text: "Read Nagel essay")],
-            .thu: [Item(text: "Widget window layer"), Item(text: "Groceries")],
-            .fri: [Item(text: "Week review")],
-            .wknd: [Item(text: "Bike to the reservoir")]
-        ],
-        ideas: [
-            Item(text: "Look into SMAppService"),
-            Item(text: "Cancel the storage unit"),
-            Item(text: "Birthday present for M."),
-            Item(text: "Fix the bathroom light")
-        ],
-        reminder: "Rent, Tuesday"
-    )
+extension Sheet {
+    static let mock: Sheet = {
+        var sheet = Sheet(
+            buckets: [
+                BucketKey("2026-09-21")!: [Item(text: "Ship spec v0.1", done: true), Item(text: "Call with Ana")],
+                BucketKey("2026-09-22")!: [Item(text: "Rewrite onboarding copy")],
+                BucketKey("2026-09-23")!: [Item(text: "Dentist, 14:30"), Item(text: "Invoice August"), Item(text: "Read Nagel essay")],
+                BucketKey("2026-09-24")!: [Item(text: "Widget window layer"), Item(text: "Groceries")],
+                BucketKey("2026-09-25")!: [Item(text: "Week review")],
+                BucketKey("2026-09-26")!: [Item(text: "Bike to the reservoir")]
+            ],
+            ideas: [
+                Item(text: "Look into SMAppService"),
+                Item(text: "Cancel the storage unit"),
+                Item(text: "Birthday present for M."),
+                Item(text: "Fix the bathroom light")
+            ],
+            weeklyFocus: [:]
+        )
+        sheet.setFocus("Rent, Tuesday", for: Sheet.parseDate("2026-09-21")!)
+        return sheet
+    }()
 }

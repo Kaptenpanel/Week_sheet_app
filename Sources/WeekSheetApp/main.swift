@@ -7,7 +7,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         let store = FileStore()
-        _ = try? store.loadAndResetIfNeeded()
         windowController = WindowController(store: store)
         statusItem = StatusItem(windowController: windowController)
     }

@@ -34,7 +34,7 @@ struct LegacyWeek: Decodable {
     /// original untouched. `weekStart` was always a Monday when the old app wrote it, and the
     /// offset table is only collision-free if it still is.
     func toSheet() throws -> Sheet {
-        guard let monday = Week.parseDate(weekStart) else {
+        guard let monday = Sheet.parseDate(weekStart) else {
             throw DecodingError.dataCorrupted(.init(
                 codingPath: [],
                 debugDescription: "weekStart is not an ISO yyyy-MM-dd date: \(weekStart)"

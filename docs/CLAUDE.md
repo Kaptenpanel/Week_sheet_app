@@ -3,7 +3,7 @@
 Read `weeksheet-spec-v1.md` before anything. The design PNG is the pixel target.
 
 ## What this is
-A macOS desktop widget. One week, 6 columns × 3 slots, one "New Ideas" inbox, one Reminder line, one Notes box. Swift + SwiftUI + AppKit. Zero dependencies. That is the whole product.
+A macOS desktop widget. One week, 6 columns × 3 slots, one "New Ideas" inbox, one Weekly Focus line. Swift + SwiftUI + AppKit. Zero dependencies. That is the whole product.
 
 ## Scope discipline
 - Work only on the task you were given. One build-order step per task.
@@ -18,8 +18,8 @@ A macOS desktop widget. One week, 6 columns × 3 slots, one "New Ideas" inbox, o
 - No loading states, empty-state illustrations, onboarding, or settings screens unless the task says so.
 
 ## Code shape
-- `Week.swift` (model), `FileStore.swift`, `WindowController.swift`, `StatusItem.swift`, `SheetView.swift` + small subviews. Resist creating more files than the feature needs.
-- Timestamps and dates in ISO 8601, local time. `weekStart` is always a Monday.
+- `Sheet.swift` (model), `LegacyMigration.swift`, `FileStore.swift`, `WindowController.swift`, `StatusItem.swift`, `SheetView.swift` + small subviews. Resist creating more files than the feature needs.
+- Timestamps and dates in ISO 8601, local time. A `BucketKey` is a weekday's own date, or the Saturday of a weekend bucket.
 - Every rule in the spec's "The rules" section is enforced in the model, not the view.
 
 ## When unsure
