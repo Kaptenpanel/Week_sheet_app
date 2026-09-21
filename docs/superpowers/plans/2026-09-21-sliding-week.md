@@ -1455,7 +1455,7 @@ struct LegacyWeek: Decodable {
 - [ ] **Step 4: Run the tests and verify they pass**
 
 Run: `swift test`
-Expected: PASS, 105 tests (98 + 7 new), 0 failures.
+Expected: PASS, 108 tests (98 + 7 new, plus the 3 added by this task's fix round for the two throw paths and the over-cap day), 0 failures.
 
 - [ ] **Step 5: Commit**
 
@@ -1649,7 +1649,7 @@ Append inside `FileStore` in `Sources/WeekSheet/FileStore.swift`, after `save(_ 
 - [ ] **Step 4: Run the tests and verify they pass**
 
 Run: `swift test`
-Expected: PASS, 114 tests (105 + 9 new), 0 failures.
+Expected: PASS, 117 tests (108 + 9 new), 0 failures.
 
 - [ ] **Step 5: Commit**
 
@@ -2108,7 +2108,7 @@ extension Sheet {
 - [ ] **Step 8: Run the tests**
 
 Run: `swift test`
-Expected: PASS. The count drops sharply — 114 from Task 6 minus however many old-model tests Step 2 deletes. Do not treat any particular number as the target: what matters is 0 failures, every surviving test still meaningful, and no remaining reference to `Week`. Report the number you land on.
+Expected: PASS. The count drops sharply — 117 from Task 6 minus however many old-model tests Step 2 deletes. Do not treat any particular number as the target: what matters is 0 failures, every surviving test still meaningful, and no remaining reference to `Week`. Report the number you land on.
 
 - [ ] **Step 9: Confirm `Week` is gone**
 
