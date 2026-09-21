@@ -676,6 +676,48 @@ final class SheetTests: XCTestCase {
             .appendingPathComponent("WeekSheetViewModel-\(UUID().uuidString)")
     }
 
+    /// The end-to-end property the quarantine exists for, spanning `FileStore.load`, the view
+    /// model's `try?` fallback and `save()`: a file the app cannot interpret still costs the user
+    /// nothing. Any one of those three links breaking loses their items, so this asserts on the
+    /// bytes rather than on a file merely existing.
+    func testAnEditAfterAnUnreadableFileCannotDestroyTheOriginal() throws {
+        let tmp = scratchDirectory()
+        defer { try? FileManager.default.removeItem(at: tmp) }
+
+        // The only copy of the user's items, in a shape nothing can interpret.
+        let precious = """
+        {
+            "weekStart": "not-a-date",
+            "days": { "mon": [{ "id": "550E8400-E29B-41D4-A716-446655440001", "text": "Precious", "done": false }] },
+            "ideas": [],
+            "reminder": "Keep me"
+        }
+        """.data(using: .utf8)!
+        try FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true)
+        try precious.write(to: tmp.appendingPathComponent("week.json"))
+
+        // The view model swallows the throw and degrades to an empty sheet, so the user is shown
+        // a blank week...
+        let viewModel = makeViewModel(tmp)
+        XCTAssertTrue(viewModel.sheet.buckets.isEmpty, "an uninterpretable file must not load")
+
+        // ...and starts typing into it, which saves.
+        viewModel.addItem(to: BucketKey("2026-09-22")!, text: "Typed over the top")
+        XCTAssertFalse(viewModel.sheet.buckets.isEmpty, "the edit should have been applied")
+
+        // That save really did land on week.json — the hazard is not hypothetical.
+        let written = try Data(contentsOf: tmp.appendingPathComponent("week.json"))
+        XCTAssertNotEqual(written, precious, "week.json was overwritten, as the user's edit must")
+
+        // And the original survived it, byte for byte.
+        let quarantined = try FileManager.default
+            .contentsOfDirectory(at: tmp, includingPropertiesForKeys: nil)
+            .filter { $0.lastPathComponent.hasPrefix("week-unreadable-") }
+        XCTAssertEqual(quarantined.count, 1, "expected exactly one quarantined file")
+        XCTAssertEqual(try quarantined.first.map { try Data(contentsOf: $0) }, precious,
+                       "the user's only copy must survive the save byte-for-byte")
+    }
+
     func testUndoRestoresADeletedItemToItsOwnBucket() throws {
         let tmp = scratchDirectory()
         defer { try? FileManager.default.removeItem(at: tmp) }
