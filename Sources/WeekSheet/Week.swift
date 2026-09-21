@@ -554,4 +554,53 @@ public struct Sheet: Equatable, Codable {
             weeklyFocus[key] = text
         }
     }
+
+    // MARK: - Window
+
+    /// The six buckets to render. Week mode starts at the anchor's Monday; sliding mode starts
+    /// one bucket earlier than the anchor's own, which puts the anchor in slot 1 on every day of
+    /// the week — Sunday included, because Sunday shares Saturday's bucket.
+    public static func window(anchor: Date, mode: WindowMode) -> [BucketKey] {
+        let start: BucketKey
+        switch mode {
+        case .week:
+            start = BucketKey.monday(of: anchor)
+        case .sliding:
+            start = BucketKey.containing(anchor).stepped(by: -1)
+        }
+        return (0..<6).map { start.stepped(by: $0) }
+    }
+
+    /// Moves the anchor by `n` steps — a whole week in week mode, a single bucket in sliding mode.
+    public static func steppedAnchor(_ anchor: Date, by n: Int, mode: WindowMode) -> Date {
+        switch mode {
+        case .week:
+            return Calendar.current.date(byAdding: .day, value: 7 * n, to: anchor) ?? anchor
+        case .sliding:
+            return BucketKey.containing(anchor).stepped(by: n).firstDate
+        }
+    }
+
+    /// Whether stepping back once would still land inside the retention horizon. Deliberately a
+    /// date rule rather than a data rule: an empty past must still be navigable.
+    public static func canStepBack(from anchor: Date, mode: WindowMode, now: Date = Date()) -> Bool {
+        guard let horizon = Self.horizon(now: now) else { return false }
+        let previous = steppedAnchor(anchor, by: -1, mode: mode)
+        guard let slotZero = window(anchor: previous, mode: mode).first else { return false }
+        return slotZero.lastDate >= horizon
+    }
+
+    // MARK: - Prune
+
+    /// Deletes every bucket that ended more than `retentionDays` ago. Judging by the bucket's
+    /// last day, not its key, is what gives Sunday items a full seven days.
+    public mutating func prune(now: Date = Date()) {
+        guard let horizon = Self.horizon(now: now) else { return }
+        buckets = buckets.filter { $0.key.lastDate >= horizon }
+    }
+
+    private static func horizon(now: Date) -> Date? {
+        let cal = Calendar.current
+        return cal.date(byAdding: .day, value: -retentionDays, to: cal.startOfDay(for: now))
+    }
 }

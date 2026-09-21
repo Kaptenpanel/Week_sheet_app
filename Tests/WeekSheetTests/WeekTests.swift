@@ -604,4 +604,175 @@ final class WeekTests: XCTestCase {
         let sheet = try JSONDecoder().decode(Sheet.self, from: json)
         XCTAssertTrue(sheet.buckets.isEmpty)
     }
+
+    // MARK: - Sheet: window
+
+    func testWeekModeWindowIsMondayThroughWeekend() {
+        let wed = Week.parseDate("2026-09-23")!
+        let keys = Sheet.window(anchor: wed, mode: .week).map(\.id)
+        XCTAssertEqual(keys, [
+            "2026-09-21", "2026-09-22", "2026-09-23",
+            "2026-09-24", "2026-09-25", "2026-09-26"
+        ])
+    }
+
+    func testWeekModeWindowIsStableAcrossTheWholeWeek() {
+        let expected = Sheet.window(anchor: Week.parseDate("2026-09-21")!, mode: .week)
+        for day in ["2026-09-22", "2026-09-25", "2026-09-26", "2026-09-27"] {
+            XCTAssertEqual(Sheet.window(anchor: Week.parseDate(day)!, mode: .week), expected, day)
+        }
+    }
+
+    func testWeekModeHeadersReadMonThroughWknd() {
+        let keys = Sheet.window(anchor: Week.parseDate("2026-09-21")!, mode: .week)
+        XCTAssertEqual(keys.map(\.headerLabel), ["MON", "TUE", "WED", "THU", "FRI", "WKND"])
+    }
+
+    func testSlidingModePutsTheAnchorInSlotOneEveryDay() {
+        // Mon 21 through Sun 27 — one full cycle, weekend included.
+        for day in ["2026-09-21", "2026-09-22", "2026-09-23", "2026-09-24",
+                    "2026-09-25", "2026-09-26", "2026-09-27"] {
+            let date = Week.parseDate(day)!
+            let keys = Sheet.window(anchor: date, mode: .sliding)
+            XCTAssertEqual(keys.count, 6, day)
+            XCTAssertEqual(keys[1], BucketKey.containing(date), day)
+        }
+    }
+
+    func testSlidingModeWindowOnMonday() {
+        let keys = Sheet.window(anchor: Week.parseDate("2026-09-21")!, mode: .sliding).map(\.id)
+        XCTAssertEqual(keys, [
+            "2026-09-19", "2026-09-21", "2026-09-22",
+            "2026-09-23", "2026-09-24", "2026-09-25"
+        ])
+    }
+
+    func testSlidingModeWindowOnSundayStartsAtFriday() {
+        // Saturday shares Sunday's bucket, so slot 0 falls back to Friday.
+        let keys = Sheet.window(anchor: Week.parseDate("2026-09-27")!, mode: .sliding).map(\.id)
+        XCTAssertEqual(keys, [
+            "2026-09-25", "2026-09-26", "2026-09-28",
+            "2026-09-29", "2026-09-30", "2026-10-01"
+        ])
+    }
+
+    func testWindowIsAlwaysSixDistinctBuckets() {
+        for mode in [WindowMode.week, .sliding] {
+            for day in ["2026-09-21", "2026-09-26", "2026-09-27", "2026-12-31"] {
+                let keys = Sheet.window(anchor: Week.parseDate(day)!, mode: mode)
+                XCTAssertEqual(keys.count, 6)
+                XCTAssertEqual(Set(keys).count, 6, "\(mode) \(day)")
+            }
+        }
+    }
+
+    // MARK: - Sheet: anchor stepping
+
+    func testWeekModeAnchorStepsAWholeWeek() {
+        let mon = Week.parseDate("2026-09-21")!
+        let back = Sheet.steppedAnchor(mon, by: -1, mode: .week)
+        XCTAssertEqual(Sheet.window(anchor: back, mode: .week).first?.id, "2026-09-14")
+        let forward = Sheet.steppedAnchor(mon, by: 1, mode: .week)
+        XCTAssertEqual(Sheet.window(anchor: forward, mode: .week).first?.id, "2026-09-28")
+    }
+
+    func testSlidingModeAnchorStepsOneBucket() {
+        let mon = Week.parseDate("2026-09-21")!
+        let back = Sheet.steppedAnchor(mon, by: -1, mode: .sliding)
+        XCTAssertEqual(BucketKey.containing(back).id, "2026-09-19")
+        let forward = Sheet.steppedAnchor(mon, by: 1, mode: .sliding)
+        XCTAssertEqual(BucketKey.containing(forward).id, "2026-09-22")
+    }
+
+    // MARK: - Sheet: navigation clamp
+
+    func testCanStepBackOneWeekButNotTwo() {
+        let now = Week.parseDate("2026-09-21")!
+        XCTAssertTrue(Sheet.canStepBack(from: now, mode: .week, now: now))
+        let oneBack = Sheet.steppedAnchor(now, by: -1, mode: .week)
+        XCTAssertFalse(Sheet.canStepBack(from: oneBack, mode: .week, now: now))
+    }
+
+    func testCanStepBackStopsAtTheRetentionHorizon() {
+        let now = Week.parseDate("2026-09-21")!
+        var anchor = now
+        var steps = 0
+        while Sheet.canStepBack(from: anchor, mode: .sliding, now: now), steps < 20 {
+            anchor = Sheet.steppedAnchor(anchor, by: -1, mode: .sliding)
+            steps += 1
+        }
+        XCTAssertLessThan(steps, 20, "clamp never engaged")
+        // The oldest reachable slot 0 must still be inside the 7-day horizon.
+        let horizon = Calendar.current.date(byAdding: .day, value: -Sheet.retentionDays,
+                                            to: Calendar.current.startOfDay(for: now))!
+        let slot0 = Sheet.window(anchor: anchor, mode: .sliding)[0]
+        XCTAssertGreaterThanOrEqual(slot0.lastDate, horizon)
+    }
+
+    func testCanStepBackIsIndependentOfStoredData() {
+        // An empty sheet must still navigate; the clamp is a date rule, not a data rule.
+        let now = Week.parseDate("2026-09-21")!
+        XCTAssertTrue(Sheet.canStepBack(from: now, mode: .sliding, now: now))
+    }
+
+    // MARK: - Sheet: prune
+
+    func testPruneKeepsABucketExactlySevenDaysOld() throws {
+        let now = Week.parseDate("2026-09-21")!
+        var sheet = Sheet.empty()
+        try sheet.addItem(to: BucketKey("2026-09-14")!, text: "Exactly seven days")
+        sheet.prune(now: now)
+        XCTAssertEqual(sheet.buckets[BucketKey("2026-09-14")!]?.count, 1)
+    }
+
+    func testPruneDropsAnOlderBucket() throws {
+        let now = Week.parseDate("2026-09-21")!
+        var sheet = Sheet.empty()
+        try sheet.addItem(to: BucketKey("2026-09-11")!, text: "Too old")
+        sheet.prune(now: now)
+        XCTAssertTrue(sheet.buckets.isEmpty)
+    }
+
+    func testPruneDropsDoneAndUnfinishedAlike() throws {
+        let now = Week.parseDate("2026-09-21")!
+        var sheet = Sheet.empty()
+        let old = BucketKey("2026-09-11")!
+        let item = try sheet.addItem(to: old, text: "Never did it")
+        try sheet.addItem(to: old, text: "Did it")
+        try sheet.toggleDone(sheet.buckets[old]![1].id)
+        sheet.prune(now: now)
+        XCTAssertTrue(sheet.buckets.isEmpty)
+        XCTAssertTrue(sheet.ideas.isEmpty, "prune must not rescue into ideas")
+        XCTAssertFalse(sheet.ideas.contains(where: { $0.id == item.id }))
+    }
+
+    func testPruneJudgesAWeekendBucketByItsSunday() throws {
+        // Sat 2026-09-12 / Sun 2026-09-13. Against a Sun 2026-09-20 now, the horizon is
+        // 2026-09-13, so the bucket survives on the strength of its Sunday — judged by its key
+        // it would already be gone.
+        let now = Week.parseDate("2026-09-20")!
+        var sheet = Sheet.empty()
+        try sheet.addItem(to: BucketKey("2026-09-12")!, text: "Weekend")
+        sheet.prune(now: now)
+        XCTAssertEqual(sheet.buckets[BucketKey("2026-09-12")!]?.count, 1)
+    }
+
+    func testPruneKeepsIdeasAndFocus() throws {
+        let now = Week.parseDate("2026-09-21")!
+        var sheet = Sheet.empty()
+        try sheet.addItem(to: BucketKey("2026-09-11")!, text: "Too old")
+        sheet.addIdea(text: "Ideas never expire")
+        sheet.setFocus("Focus never expires", for: Week.parseDate("2026-09-07")!)
+        sheet.prune(now: now)
+        XCTAssertEqual(sheet.ideas.count, 1)
+        XCTAssertEqual(sheet.weeklyFocus.count, 1)
+    }
+
+    func testPruneKeepsTheFuture() throws {
+        let now = Week.parseDate("2026-09-21")!
+        var sheet = Sheet.empty()
+        try sheet.addItem(to: BucketKey("2026-12-25")!, text: "Far ahead")
+        sheet.prune(now: now)
+        XCTAssertEqual(sheet.buckets.count, 1)
+    }
 }
