@@ -36,7 +36,6 @@ public final class SheetViewModel: ObservableObject {
     @Published var addingDay: Day?
     @Published var addingIdea = false
     @Published var editingReminder = false
-    @Published var editingNotes = false
     @Published private(set) var undoState: UndoInfo?
     @Published var shakingDay: Day?
     @Published var isHorizontalMode: Bool
@@ -185,19 +184,11 @@ public final class SheetViewModel: ObservableObject {
 
     func startEditing(_ id: UUID) { editingID = id; selectedID = id }
 
-    func startEditingReminder() { editingReminder = true; editingNotes = false; editingID = nil; selectedID = nil; addingDay = nil; addingIdea = false }
+    func startEditingReminder() { editingReminder = true; editingID = nil; selectedID = nil; addingDay = nil; addingIdea = false }
 
     func updateReminder(_ text: String) {
         editingReminder = false
         week.reminder = text.trimmingCharacters(in: .whitespaces)
-        save()
-    }
-
-    func startEditingNotes() { editingNotes = true; editingReminder = false; editingID = nil; selectedID = nil; addingDay = nil; addingIdea = false }
-
-    func updateNotes(_ text: String) {
-        editingNotes = false
-        week.notes = text.trimmingCharacters(in: .whitespacesAndNewlines)
         save()
     }
 
@@ -218,7 +209,7 @@ public final class SheetViewModel: ObservableObject {
         save()
     }
 
-    func cancelEditing() { editingID = nil; addingDay = nil; addingIdea = false; editingReminder = false; editingNotes = false; selectedID = nil }
+    func cancelEditing() { editingID = nil; addingDay = nil; addingIdea = false; editingReminder = false; selectedID = nil }
 
     func toggleLayoutMode() {
         isHorizontalMode.toggle()
@@ -232,8 +223,8 @@ public final class SheetViewModel: ObservableObject {
         eventMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard let self else { return event }
             if self.editingID != nil || self.addingDay != nil || self.addingIdea { return event }
-            // Reminder/Notes get typed keys (incl. Space); Esc still leaves edit mode.
-            if (self.editingReminder || self.editingNotes) && event.keyCode != 53 { return event }
+            // Reminder gets typed keys (incl. Space); Esc still leaves edit mode.
+            if self.editingReminder && event.keyCode != 53 { return event }
             switch event.keyCode {
             case 49: self.toggleDone(); return nil
             case 51: if let id = self.selectedID { self.deleteItem(id); return nil }; return event
@@ -500,7 +491,7 @@ public struct SheetView: View {
     private var bottom: some View {
         HStack(alignment: .top, spacing: 16) {
             ideasPanel
-            VStack(spacing: 12) { reminderPanel; notesPanel }
+            reminderPanel
         }
     }
 
@@ -615,38 +606,6 @@ public struct SheetView: View {
         }
     }
 
-    private var notesPanel: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("NOTES").font(headerFont).foregroundColor(.black.opacity(0.6))
-            ZStack(alignment: .topLeading) {
-                VStack(spacing: 0) {
-                    ForEach(0..<5, id: \.self) { _ in
-                        Spacer().frame(height: 20)
-                        Rectangle().fill(ruleColor.opacity(0.5)).frame(height: 1)
-                    }
-                }
-                Text(viewModel.week.notes.isEmpty ? " " : viewModel.week.notes)
-                    .font(bodyFont).foregroundColor(bodyText).lineSpacing(6)
-                    .frame(maxWidth: .infinity, alignment: .topLeading)
-                    .opacity(viewModel.editingNotes ? 0 : 1)
-                if viewModel.editingNotes && viewModel.isEditMode {
-                    InlineTextEditor(
-                        text: viewModel.week.notes,
-                        onCommit: { viewModel.updateNotes($0) }
-                    )
-                }
-            }
-            .fixedSize(horizontal: false, vertical: true)
-            .contentShape(Rectangle())
-            .onTapGesture {
-                if viewModel.isEditMode && !viewModel.editingNotes { viewModel.startEditingNotes() }
-            }
-        }
-        .padding(12)
-        .frame(maxWidth: .infinity, alignment: .topLeading)
-        .background(coolPanel).cornerRadius(4)
-    }
-
     // MARK: Horizontal layout
 
     private var dayRows: some View {
@@ -718,7 +677,6 @@ public struct SheetView: View {
     private var sidebar: some View {
         VStack(spacing: 12) {
             ideasPanel
-            notesPanel
             reminderPanel
         }
     }
@@ -892,7 +850,6 @@ extension Week {
             Item(text: "Birthday present for M."),
             Item(text: "Fix the bathroom light")
         ],
-        reminder: "Rent, Tuesday",
-        notes: "Cap of 3 is the product.\nDon't add a fourth slot."
+        reminder: "Rent, Tuesday"
     )
 }

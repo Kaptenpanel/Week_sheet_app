@@ -32,7 +32,6 @@ final class FileStoreTests: XCTestCase {
         try week.addItem(to: .mon, text: "Persisted")
         let _ = week.addIdea(text: "Saved idea")
         week.reminder = "Rent"
-        week.notes = "Notes here"
 
         try store.save(week)
         let loaded = try store.load()
@@ -41,7 +40,6 @@ final class FileStoreTests: XCTestCase {
         XCTAssertEqual(loaded.days[.mon]?.first?.text, "Persisted")
         XCTAssertEqual(loaded.ideas.first?.text, "Saved idea")
         XCTAssertEqual(loaded.reminder, "Rent")
-        XCTAssertEqual(loaded.notes, "Notes here")
     }
 
     func testLoadValidatesOverflow() throws {

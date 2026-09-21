@@ -13,7 +13,6 @@ final class WeekTests: XCTestCase {
         }
         XCTAssertTrue(week.ideas.isEmpty)
         XCTAssertEqual(week.reminder, "")
-        XCTAssertEqual(week.notes, "")
     }
 
     // MARK: - Add item
@@ -211,7 +210,6 @@ final class WeekTests: XCTestCase {
         try week.addItem(to: .mon, text: "Unfinished")
         let _ = week.addIdea(text: "Existing idea")
         week.reminder = "Pay rent"
-        week.notes = "Some notes"
 
         let cal = Calendar.current
         let nextMon = Week.parseDate("2026-09-07")!
@@ -227,7 +225,6 @@ final class WeekTests: XCTestCase {
         XCTAssertTrue(newWeek.ideas.contains(where: { $0.text == "Unfinished" }))
         XCTAssertFalse(newWeek.ideas.contains(where: { $0.text == "Done task" }))
         XCTAssertEqual(newWeek.reminder, "")
-        XCTAssertEqual(newWeek.notes, "")
     }
 
     // MARK: - Codable
@@ -238,7 +235,6 @@ final class WeekTests: XCTestCase {
         try week.addItem(to: .wknd, text: "Weekend thing")
         let _ = week.addIdea(text: "An idea")
         week.reminder = "Rent"
-        week.notes = "Keep it simple"
 
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
@@ -253,8 +249,7 @@ final class WeekTests: XCTestCase {
             "weekStart": "2026-08-31",
             "days": { "mon": [], "tue": [], "wed": [], "thu": [], "fri": [], "wknd": [] },
             "ideas": [{ "id": "550E8400-E29B-41D4-A716-446655440000", "text": "No done field" }],
-            "reminder": "",
-            "notes": ""
+            "reminder": ""
         }
         """.data(using: .utf8)!
         let week = try JSONDecoder().decode(Week.self, from: json)
@@ -274,6 +269,21 @@ final class WeekTests: XCTestCase {
         for day in [Day.tue, .wed, .thu, .fri, .wknd] {
             XCTAssertEqual(week.days[day]?.count, 0)
         }
+    }
+
+    func testDecodesLegacyFileWithNotesKey() throws {
+        let json = """
+        {
+            "weekStart": "2026-08-31",
+            "days": { "mon": [{ "id": "550E8400-E29B-41D4-A716-446655440000", "text": "Kept", "done": false }] },
+            "ideas": [],
+            "reminder": "Rent",
+            "notes": "This field no longer exists on the model."
+        }
+        """.data(using: .utf8)!
+        let week = try JSONDecoder().decode(Week.self, from: json)
+        XCTAssertEqual(week.days[.mon]?.first?.text, "Kept")
+        XCTAssertEqual(week.reminder, "Rent")
     }
 
     // MARK: - Date helpers

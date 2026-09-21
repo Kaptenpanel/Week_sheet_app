@@ -35,14 +35,12 @@ public struct Week: Equatable, Codable {
     public var days: [Day: [Item]]
     public var ideas: [Item]
     public var reminder: String
-    public var notes: String
 
-    public init(weekStart: String, days: [Day: [Item]], ideas: [Item], reminder: String, notes: String) {
+    public init(weekStart: String, days: [Day: [Item]], ideas: [Item], reminder: String) {
         self.weekStart = weekStart
         self.days = days
         self.ideas = ideas
         self.reminder = reminder
-        self.notes = notes
     }
 
     public static func empty(weekStart: String) -> Week {
@@ -50,13 +48,12 @@ public struct Week: Equatable, Codable {
             weekStart: weekStart,
             days: Dictionary(uniqueKeysWithValues: Day.allCases.map { ($0, [Item]()) }),
             ideas: [],
-            reminder: "",
-            notes: ""
+            reminder: ""
         )
     }
 
     private enum CodingKeys: String, CodingKey {
-        case weekStart, days, ideas, reminder, notes
+        case weekStart, days, ideas, reminder
     }
 
     public init(from decoder: Decoder) throws {
@@ -68,7 +65,6 @@ public struct Week: Equatable, Codable {
         days = allDays
         ideas = try container.decodeIfPresent([Item].self, forKey: .ideas) ?? []
         reminder = try container.decodeIfPresent(String.self, forKey: .reminder) ?? ""
-        notes = try container.decodeIfPresent(String.self, forKey: .notes) ?? ""
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -78,7 +74,6 @@ public struct Week: Equatable, Codable {
         try container.encode(stringDays, forKey: .days)
         try container.encode(ideas, forKey: .ideas)
         try container.encode(reminder, forKey: .reminder)
-        try container.encode(notes, forKey: .notes)
     }
 
     // MARK: - Validation
@@ -205,8 +200,7 @@ public struct Week: Equatable, Codable {
             weekStart: Self.mondayOfWeek(containing: now),
             days: Dictionary(uniqueKeysWithValues: Day.allCases.map { ($0, [Item]()) }),
             ideas: newIdeas,
-            reminder: "",
-            notes: ""
+            reminder: ""
         )
     }
 
