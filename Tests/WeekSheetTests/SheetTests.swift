@@ -934,4 +934,67 @@ final class SheetTests: XCTestCase {
         XCTAssertEqual(viewModel.sheet.focus(for: viewModel.anchor), "",
                        "the week now on screen must be untouched")
     }
+
+    /// Regression: `selectedID` used to die with `cancelEditing()` on every navigation. Without
+    /// that, it survives, and `deleteItem`/`toggleDone` search every bucket rather than just the
+    /// window -- so a stale selection lets Space/Delete reach an item that is no longer on screen.
+    /// The second assertion is the one that matters: it pins the hazard `deleteItem` shares with
+    /// `toggleDone`, not just the flag that happens to cause it.
+    func testNavigatingClearsAStaleSelectionSoToggleDoneCannotReachIt() throws {
+        let tmp = scratchDirectory()
+        defer { try? FileManager.default.removeItem(at: tmp) }
+        let viewModel = makeViewModel(tmp)
+
+        let monday = Sheet.parseDate("2026-09-21")!
+        viewModel.anchor = monday
+        let tuesday = BucketKey("2026-09-22")!
+        let item = try viewModel.sheet.addItem(to: tuesday, text: "Off screen after navigating")
+        viewModel.select(item.id)
+
+        viewModel.stepForward()
+
+        XCTAssertNil(viewModel.selectedID, "navigation must clear a stale selection")
+
+        viewModel.toggleDone()
+        XCTAssertEqual(viewModel.sheet.buckets[tuesday]?.first(where: { $0.id == item.id })?.done, false,
+                       "toggleDone must not be able to reach an item that is no longer on screen")
+    }
+
+    /// Regression: `editingID`/`addingBucket` used to die with `cancelEditing()` on every
+    /// navigation. Without that, `installKeyHandler`'s guard (`if self.editingID != nil ||
+    /// self.addingBucket != nil ...`) keeps skipping Space/Delete/Escape after the field that set
+    /// them has already been unmounted, leaving the keyboard dead until the user clicks elsewhere.
+    func testNavigatingClearsAStaleBucketItemEdit() throws {
+        let tmp = scratchDirectory()
+        defer { try? FileManager.default.removeItem(at: tmp) }
+        let viewModel = makeViewModel(tmp)
+
+        let monday = Sheet.parseDate("2026-09-21")!
+        viewModel.anchor = monday
+        let tuesday = BucketKey("2026-09-22")!
+        let item = try viewModel.sheet.addItem(to: tuesday, text: "Mid-edit")
+        viewModel.startEditing(item.id)
+        viewModel.addingBucket = BucketKey("2026-09-23")!
+
+        viewModel.stepForward()
+
+        XCTAssertNil(viewModel.editingID, "navigation must clear a stale item edit")
+        XCTAssertNil(viewModel.addingBucket, "navigation must clear a stale add-to-bucket")
+    }
+
+    /// The asymmetry with the two tests above is deliberate, not an oversight: `addingIdea`'s
+    /// field is not window-gated (ideas are not tied to a bucket), so it stays mounted across a
+    /// navigation and still holds whatever the user has typed. A future tidy-up that folds this
+    /// into `clearWindowBoundEditingState()` "for consistency" would silently discard that text --
+    /// this test exists to catch exactly that.
+    func testNavigatingDoesNotClearAnInProgressIdea() {
+        let tmp = scratchDirectory()
+        defer { try? FileManager.default.removeItem(at: tmp) }
+        let viewModel = makeViewModel(tmp)
+
+        viewModel.startAddingIdea()
+        viewModel.stepForward()
+
+        XCTAssertTrue(viewModel.addingIdea, "an in-progress idea must survive navigation, not be discarded")
+    }
 }

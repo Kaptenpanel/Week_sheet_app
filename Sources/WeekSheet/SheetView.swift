@@ -247,6 +247,22 @@ public final class SheetViewModel: ObservableObject {
 
     // MARK: Navigation
 
+    /// Navigation replaces every key in the window, so any bucket-item field is unmounted — but
+    /// its flag outlives it, and the key handler skips Space/Delete/Escape while one is set, which
+    /// leaves the keyboard dead until the user clicks elsewhere. Selection goes too: it is a
+    /// visual affordance, and `deleteItem` searches every bucket, so a stale selection would let
+    /// Delete remove an item that is no longer on screen.
+    ///
+    /// `addingIdea` and `editingReminder` are deliberately left alone. Their fields are not
+    /// window-gated, so they survive a navigation still mounted and still holding the user's typed
+    /// text — clearing them would unmount them and lose it. The key handler's guard is correct for
+    /// those two: keystrokes belong to the field that is genuinely still open.
+    private func clearWindowBoundEditingState() {
+        editingID = nil
+        addingBucket = nil
+        selectedID = nil
+    }
+
     func canStepBack(now: Date = Date()) -> Bool {
         Sheet.canStepBack(from: anchor, mode: windowMode, now: now)
     }
@@ -255,16 +271,19 @@ public final class SheetViewModel: ObservableObject {
         guard canStepBack(now: now) else { return }
         anchor = Sheet.steppedAnchor(anchor, by: -1, mode: windowMode)
         followsToday = false
+        clearWindowBoundEditingState()
     }
 
     func stepForward() {
         anchor = Sheet.steppedAnchor(anchor, by: 1, mode: windowMode)
         followsToday = false
+        clearWindowBoundEditingState()
     }
 
     func goToToday() {
         anchor = Date()
         followsToday = true
+        clearWindowBoundEditingState()
     }
 
     // MARK: Key handler
