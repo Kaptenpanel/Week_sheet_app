@@ -125,8 +125,8 @@ public mutating func prune(now: Date = Date())
 
 Drops any bucket whose `lastDate` is more than `retentionDays` before the start of today. Using
 `lastDate` rather than the key means the weekend bucket survives until its *Sunday* crosses the
-horizon, so Sunday items get a full seven days and Saturday items get eight. The alternative —
-testing the key — would silently cut Sunday items to six days.
+horizon, so Sunday items get a full seven days and Saturday items get a day longer. The
+alternative — testing the key — would silently cut Sunday items to six days.
 
 Pruning deletes done and unfinished items alike. `ideas` and `weeklyFocus` are never pruned.
 
@@ -190,10 +190,11 @@ ForEach(Array(viewModel.window.enumerated()), id: \.element) { slot, key in
 }
 ```
 
-Column headers become computed from the key's weekday (`MON`…`FRI`, or `SAT/SUN` for a weekend
-bucket) rather than literal text. In week mode they render in the same order as today, so the
-design PNG still matches exactly. In sliding mode they rotate. Structure, spacing, and colours
-are untouched, which keeps the `// UI STATUS: LOCKED` contract.
+Column headers become computed from the key's weekday rather than from `day.rawValue`. The
+strings are unchanged — `MON`…`FRI` and `WKND` for the weekend bucket — so week mode renders
+byte-identical text in the same order and the design PNG still matches exactly. In sliding mode
+the headers rotate. Structure, spacing, and colours are untouched, which keeps the
+`// UI STATUS: LOCKED` contract.
 
 `horizontalDateLabel`, `dateLabelFor`, and `todayDay` collapse into label helpers on
 `BucketKey`, which is where their date arithmetic already effectively lived.
