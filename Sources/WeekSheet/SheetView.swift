@@ -36,6 +36,10 @@ public final class SheetViewModel: ObservableObject {
     @Published var addingBucket: BucketKey?
     @Published var addingIdea = false
     @Published var editingReminder = false
+    /// The week the focus line was opened for. `updateReminder` must not read `anchor` at commit
+    /// time: navigation can move it while the field is still open, which would attribute the text
+    /// to a week the user was never looking at and overwrite that week's line.
+    private var editingReminderAnchor: Date?
     @Published private(set) var undoState: UndoInfo?
     @Published var shakingBucket: BucketKey?
     @Published var isHorizontalMode: Bool
@@ -201,11 +205,16 @@ public final class SheetViewModel: ObservableObject {
 
     func startEditing(_ id: UUID) { editingID = id; selectedID = id }
 
-    func startEditingReminder() { editingReminder = true; editingID = nil; selectedID = nil; addingBucket = nil; addingIdea = false }
+    func startEditingReminder() {
+        editingReminder = true
+        editingReminderAnchor = anchor
+        editingID = nil; selectedID = nil; addingBucket = nil; addingIdea = false
+    }
 
     func updateReminder(_ text: String) {
         editingReminder = false
-        sheet.setFocus(text.trimmingCharacters(in: .whitespaces), for: anchor)
+        sheet.setFocus(text.trimmingCharacters(in: .whitespaces), for: editingReminderAnchor ?? anchor)
+        editingReminderAnchor = nil
         save()
     }
 
@@ -226,7 +235,10 @@ public final class SheetViewModel: ObservableObject {
         save()
     }
 
-    func cancelEditing() { editingID = nil; addingBucket = nil; addingIdea = false; editingReminder = false; selectedID = nil }
+    func cancelEditing() {
+        editingID = nil; addingBucket = nil; addingIdea = false; selectedID = nil
+        editingReminder = false; editingReminderAnchor = nil
+    }
 
     func toggleLayoutMode() {
         isHorizontalMode.toggle()
@@ -235,25 +247,24 @@ public final class SheetViewModel: ObservableObject {
 
     // MARK: Navigation
 
-    var canStepBack: Bool { Sheet.canStepBack(from: anchor, mode: windowMode) }
+    func canStepBack(now: Date = Date()) -> Bool {
+        Sheet.canStepBack(from: anchor, mode: windowMode, now: now)
+    }
 
-    func stepBack() {
-        guard canStepBack else { return }
+    func stepBack(now: Date = Date()) {
+        guard canStepBack(now: now) else { return }
         anchor = Sheet.steppedAnchor(anchor, by: -1, mode: windowMode)
         followsToday = false
-        cancelEditing()
     }
 
     func stepForward() {
         anchor = Sheet.steppedAnchor(anchor, by: 1, mode: windowMode)
         followsToday = false
-        cancelEditing()
     }
 
     func goToToday() {
         anchor = Date()
         followsToday = true
-        cancelEditing()
     }
 
     // MARK: Key handler
@@ -588,7 +599,7 @@ public struct SheetView: View {
                     InlineTextField(
                         text: viewModel.sheet.focus(for: viewModel.anchor),
                         onCommit: { viewModel.updateReminder($0) },
-                        onCancel: { viewModel.editingReminder = false }
+                        onCancel: { viewModel.cancelEditing() }
                     ).frame(maxWidth: .infinity)
                 }
             }

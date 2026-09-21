@@ -811,12 +811,21 @@ final class SheetTests: XCTestCase {
 
     // `testTickMovesTheWindowWhenTheWeekRollsOver` above already covers "midnight moves the
     // window when the user has not navigated" -- confirmed still passing with `followsToday` in
-    // place, so it is not duplicated here.
+    // place, so it is not duplicated here. It ticks 2026-09-27 (Sunday) to 2026-09-28 (the
+    // following Monday), whose windows start seven days apart, so unlike the two tests below in
+    // their earlier form it cannot pass by coincidence regardless of which real weekday the
+    // suite runs on.
 
-    /// Uses `stepForward()`, not `stepBack()`: the view model's `canStepBack` clamps against the
-    /// real wall clock (`Sheet.canStepBack` defaults `now` to `Date()`), so a back-step's success
-    /// depends on which real-world weekday the suite happens to run on. Forward navigation is
-    /// never clamped, which exercises the same `followsToday` path without that flakiness.
+    /// Uses `stepForward()`: it needs no `now` argument to unclamp, so it is the simplest way to
+    /// exercise `followsToday` becoming false. The clamped case (`stepBack`) is covered on its
+    /// own below, now that `canStepBack`/`stepBack` take an injectable date.
+    ///
+    /// The probe tick is 14 days out, not "tomorrow": `Calendar.current.date(byAdding: .day,
+    /// value: 1, to: Date())` lands in the same ISO week as `Date()` on six real-world weekdays
+    /// out of seven, so a same-week probe cannot tell a still-tracking anchor from a correctly
+    /// frozen one -- the bug this test exists to catch would pass unnoticed most days. An exact
+    /// multiple of 7 always shifts the ISO week by that many days, so it can never coincide with
+    /// `navigated`'s week by weekday-dependent accident.
     func testTickDoesNotMoveTheWindowAtMidnightAfterTheUserHasNavigated() {
         let tmp = scratchDirectory()
         defer { try? FileManager.default.removeItem(at: tmp) }
@@ -825,14 +834,16 @@ final class SheetTests: XCTestCase {
         viewModel.stepForward()
         let navigated = viewModel.window
 
-        // Cross a day boundary while the user is looking at a week they deliberately chose.
-        let tomorrow = Calendar.current.date(byAdding: .day, value: 1, to: Date())!
-        viewModel.tick(now: tomorrow)
+        let twoWeeksOut = Calendar.current.date(byAdding: .day, value: 14, to: Date())!
+        viewModel.tick(now: twoWeeksOut)
 
         XCTAssertEqual(viewModel.window, navigated,
                        "midnight must not yank the window back to today once the user has navigated")
     }
 
+    /// See the comment on the previous test for why the probe is a week out rather than
+    /// "tomorrow": that avoids the same same-ISO-week coincidence, here between the anchor
+    /// `goToToday()` resets to (today) and the tick's target (also usually today's week).
     func testGoToTodayRestoresFollowingTheCalendar() {
         let tmp = scratchDirectory()
         defer { try? FileManager.default.removeItem(at: tmp) }
@@ -841,10 +852,86 @@ final class SheetTests: XCTestCase {
         viewModel.stepForward()
         viewModel.goToToday()
 
-        let tomorrow = Calendar.current.date(byAdding: .day, value: 1, to: Date())!
-        viewModel.tick(now: tomorrow)
+        let nextWeek = Calendar.current.date(byAdding: .day, value: 7, to: Date())!
+        viewModel.tick(now: nextWeek)
 
-        XCTAssertEqual(viewModel.window, Sheet.window(anchor: tomorrow, mode: .week),
+        XCTAssertEqual(viewModel.window, Sheet.window(anchor: nextWeek, mode: .week),
                        "goToToday must restore the follow-the-calendar behaviour")
+    }
+
+    /// 2026-09-21 is a Monday: stepping the anchor back a week lands the target week's Monday
+    /// exactly on the 7-day retention horizon, so the back-step is allowed. See
+    /// `testCanStepBackOneWeekButNotTwo` for the `Sheet`-level version of this same fact.
+    func testStepBackFromAMondayAnchorMovesTheWindowAndStopsFollowingToday() {
+        let tmp = scratchDirectory()
+        defer { try? FileManager.default.removeItem(at: tmp) }
+        let viewModel = makeViewModel(tmp)
+
+        let monday = Sheet.parseDate("2026-09-21")!
+        viewModel.anchor = monday
+
+        viewModel.stepBack(now: monday)
+
+        XCTAssertEqual(viewModel.window.first?.id, "2026-09-14",
+                       "a permitted back-step must move the window one week earlier")
+
+        // `followsToday` is private; observe its effect instead -- a tick that crosses a day
+        // boundary must not snap the window back to today now that the user has navigated. The
+        // probe is two weeks past the new anchor so the comparison cannot coincide by accident
+        // (see the multiple-of-7 note above).
+        let navigated = viewModel.window
+        let twoWeeksOut = Calendar.current.date(byAdding: .day, value: 14, to: monday)!
+        viewModel.tick(now: twoWeeksOut)
+        XCTAssertEqual(viewModel.window, navigated, "stepBack must clear followsToday")
+    }
+
+    /// 2026-09-22 is a Tuesday: stepping the anchor back a week would land the target week's
+    /// Monday one day past the 7-day retention horizon, so the back-step is refused. This
+    /// asymmetry with the Monday case above is a consequence of the retention horizon, not a
+    /// bug -- week mode only permits a back-step on the one day a week the target week's Monday
+    /// is still in range.
+    func testStepBackFromATuesdayAnchorIsRefusedByTheRetentionHorizon() {
+        let tmp = scratchDirectory()
+        defer { try? FileManager.default.removeItem(at: tmp) }
+        let viewModel = makeViewModel(tmp)
+
+        let tuesday = Sheet.parseDate("2026-09-22")!
+        viewModel.anchor = tuesday
+        let before = viewModel.window
+
+        viewModel.stepBack(now: tuesday)
+
+        XCTAssertEqual(viewModel.window, before, "a refused back-step must not move the window")
+
+        // `followsToday` is private; observe its effect instead -- since nothing navigated, a
+        // tick crossing a day boundary must still move the window with the calendar.
+        let nextWeek = Calendar.current.date(byAdding: .day, value: 7, to: tuesday)!
+        viewModel.tick(now: nextWeek)
+        XCTAssertNotEqual(viewModel.window, before,
+                          "with the back-step refused, followsToday must still be true")
+    }
+
+    /// Regression: removing `cancelEditing()` from the navigation actions left the reminder field
+    /// open across navigation (unlike a bucket-item field, it is not torn down, since its mount
+    /// condition is just `editingReminder && isEditMode`). If `updateReminder` read `anchor` at
+    /// commit time, text typed for one week could land on whichever week the user had since
+    /// navigated to. `startEditingReminder` must bind the destination when editing begins instead.
+    func testReminderCommitsToTheWeekItWasOpenedForEvenAfterNavigatingAway() {
+        let tmp = scratchDirectory()
+        defer { try? FileManager.default.removeItem(at: tmp) }
+        let viewModel = makeViewModel(tmp)
+
+        let monday = Sheet.parseDate("2026-09-21")!
+        viewModel.anchor = monday
+
+        viewModel.startEditingReminder()
+        viewModel.stepForward() // anchor moves a week later; the field stays open
+
+        viewModel.updateReminder("Typed while looking at a different week")
+
+        XCTAssertEqual(viewModel.sheet.focus(for: monday), "Typed while looking at a different week",
+                       "the text must land on the week the user was editing")
+        XCTAssertEqual(viewModel.sheet.focus(for: viewModel.anchor), "",
+                       "the week now on screen must be untouched")
     }
 }
