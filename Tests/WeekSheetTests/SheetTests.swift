@@ -421,14 +421,25 @@ final class SheetTests: XCTestCase {
     // MARK: - Sheet: window stepping
 
     /// `Sheet.steppedAnchor(_:by:mode:)` used to branch on mode: a whole week per step in
-    /// `.week`, one bucket in `.sliding`. Stepping is now `BucketKey.stepped(by:)`, which takes
-    /// no mode at all -- from the same starting bucket it moves the window by exactly one
-    /// bucket, and that is now equally true whichever mode the window happens to be in.
+    /// `.week`, one bucket in `.sliding`. Stepping is now `SheetViewModel.stepForward()`/
+    /// `stepBack()`, driven by `BucketKey.stepped(by:)`, which takes no mode at all -- from the
+    /// same starting bucket it moves the window by exactly one bucket, and that is now equally
+    /// true whichever mode the view model is in. Drives the view model rather than
+    /// `BucketKey.stepped(by:)` directly so the loop variable is doing real work: if
+    /// mode-branching ever crept back into `stepForward`/`stepBack`, this is what would catch it.
     func testSteppingMovesTheWindowByExactlyOneBucketInBothModes() {
-        let start = BucketKey("2026-09-22")!
         for mode in [WindowMode.week, .sliding] {
-            XCTAssertEqual(Sheet.window(startingAt: start.stepped(by: -1)).first?.id, "2026-09-21", "\(mode)")
-            XCTAssertEqual(Sheet.window(startingAt: start.stepped(by: 1)).first?.id, "2026-09-23", "\(mode)")
+            let tmp = scratchDirectory()
+            defer { try? FileManager.default.removeItem(at: tmp) }
+            let viewModel = makeViewModel(tmp)
+            viewModel.windowMode = mode
+            viewModel.windowStart = BucketKey("2026-09-22")!
+
+            viewModel.stepForward()
+            XCTAssertEqual(viewModel.windowStart.id, "2026-09-23", "\(mode) forward")
+
+            viewModel.stepBack(now: Sheet.parseDate("2026-09-23")!)
+            XCTAssertEqual(viewModel.windowStart.id, "2026-09-22", "\(mode) back")
         }
     }
 
