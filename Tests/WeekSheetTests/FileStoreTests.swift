@@ -13,6 +13,9 @@ final class FileStoreTests: XCTestCase {
     }
 
     override func tearDown() {
+        // Some tests make tmpDir read-only to simulate a failed write; restore permissions first
+        // or the temp directory cannot be removed.
+        try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: tmpDir.path)
         try? FileManager.default.removeItem(at: tmpDir)
         super.tearDown()
     }
@@ -87,6 +90,37 @@ final class FileStoreTests: XCTestCase {
         let obj = try JSONSerialization.jsonObject(with: data) as? [String: Any]
         XCTAssertNotNil(obj?["buckets"])
         XCTAssertNil(obj?["days"], "the legacy shape should be gone from disk")
+    }
+
+    /// The migration write is best-effort: a failed write must not throw and must not lose the
+    /// only copy of the user's data. Making tmpDir read-only after seeding lets the read succeed
+    /// while `createDirectory`/`write` fail, without a mock.
+    func testAFailedMigrationWriteDoesNotThrowAndDoesNotLoseTheFile() throws {
+        try writeRawFile(legacyFileJSON)
+        try FileManager.default.setAttributes([.posixPermissions: 0o500], ofItemAtPath: tmpDir.path)
+
+        let sheet = try store.load()
+
+        XCTAssertEqual(sheet.buckets[BucketKey("2026-09-21")!]?.first?.text, "Monday thing",
+                       "the migrated sheet must come back even though the write failed")
+
+        let stillLegacy = try Data(contentsOf: tmpDir.appendingPathComponent("week.json"))
+        XCTAssertEqual(stillLegacy, legacyFileJSON,
+                       "a failed migration write must leave week.json exactly as it was")
+    }
+
+    /// The migration is irreversible (it drops `notes`), so it must leave a backup of the
+    /// original file behind.
+    func testTheLegacyBackupExistsAfterAMigration() throws {
+        try writeRawFile(legacyFileJSON)
+        _ = try store.load()
+
+        let backups = try FileManager.default
+            .contentsOfDirectory(at: tmpDir, includingPropertiesForKeys: nil)
+            .filter { $0.lastPathComponent.hasPrefix("week-legacy-") }
+        XCTAssertEqual(backups.count, 1, "expected exactly one legacy backup")
+        XCTAssertEqual(try backups.first.map { try Data(contentsOf: $0) }, legacyFileJSON,
+                       "the backup must be byte-identical to the original legacy file")
     }
 
     func testMigratedFileLoadsAgainUnchanged() throws {

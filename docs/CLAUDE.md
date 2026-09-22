@@ -1,6 +1,6 @@
 # CLAUDE.md — Week Sheet
 
-Read `weeksheet-spec-v1.md` before anything. The design PNG is the pixel target.
+Read `weeksheet-spec-v1.md`, then `superpowers/specs/2026-09-21-sliding-week-design.md`, before anything. Where they disagree, the design doc wins — it supersedes v1 on the data model, the reset, Notes and Reminder. The design PNG is the pixel target.
 
 ## What this is
 A macOS desktop widget. One week, 6 columns × 3 slots, one "New Ideas" inbox, one Weekly Focus line. Swift + SwiftUI + AppKit. Zero dependencies. That is the whole product.

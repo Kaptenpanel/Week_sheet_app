@@ -1,5 +1,9 @@
 # Week Sheet — Spec v1.0 (build-ready)
 
+> **Superseded for the data model, the Monday reset, Notes and Reminder** by
+> `docs/superpowers/specs/2026-09-21-sliding-week-design.md`, which is the current authority on
+> those. This document is still accurate for layout, palette and interactions.
+
 A macOS desktop widget that replaces the printed weekly planner sheet. It sits on the desktop behind all windows and looks like paper. Hard-capped day slots are the product; everything else is deliberately dumb.
 
 Design reference: `Week_Sheet-selection.png` (pixel target). Source inspiration: Alpino weekly planner.

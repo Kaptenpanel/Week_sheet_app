@@ -718,6 +718,43 @@ final class SheetTests: XCTestCase {
                        "the user's only copy must survive the save byte-for-byte")
     }
 
+    /// The same end-to-end property as above, for the other route into a destroyed original: a
+    /// migration whose write fails. Makes the store's directory read-only after seeding a legacy
+    /// file, so the read succeeds and the subsequent writes do not.
+    func testAnEditAfterAFailedMigrationWriteCannotDestroyTheOriginal() throws {
+        let tmp = scratchDirectory()
+        defer {
+            try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: tmp.path)
+            try? FileManager.default.removeItem(at: tmp)
+        }
+
+        // The only copy of the user's items, in the legacy shape.
+        let legacy = """
+        {
+            "weekStart": "2026-09-21",
+            "days": { "mon": [{ "id": "550E8400-E29B-41D4-A716-446655440001", "text": "Monday thing", "done": false }] },
+            "ideas": [],
+            "reminder": "Rent"
+        }
+        """.data(using: .utf8)!
+        try FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true)
+        try legacy.write(to: tmp.appendingPathComponent("week.json"))
+        try FileManager.default.setAttributes([.posixPermissions: 0o500], ofItemAtPath: tmp.path)
+
+        // The read succeeds and the migration converts it in memory, even though the migration
+        // write, the backup copy and the save below all fail against the read-only directory.
+        let viewModel = makeViewModel(tmp)
+        XCTAssertEqual(viewModel.sheet.buckets[BucketKey("2026-09-21")!]?.first?.text, "Monday thing",
+                       "the migrated sheet must load despite the failed write")
+
+        // ...and starts typing into it, which saves — and fails, silently.
+        viewModel.addItem(to: BucketKey("2026-09-22")!, text: "Should not persist")
+
+        // The original legacy bytes must still be exactly what is on disk.
+        let written = try Data(contentsOf: tmp.appendingPathComponent("week.json"))
+        XCTAssertEqual(written, legacy, "a failed save must leave week.json exactly as it was")
+    }
+
     func testUndoRestoresADeletedItemToItsOwnBucket() throws {
         let tmp = scratchDirectory()
         defer { try? FileManager.default.removeItem(at: tmp) }

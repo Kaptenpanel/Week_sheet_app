@@ -20,39 +20,49 @@ public final class FileStore {
 
     public func load() throws -> Sheet {
         guard fileManager.fileExists(atPath: fileURL.path) else { return .empty() }
-        let data = try Data(contentsOf: fileURL)
 
-        let wasLegacy = isLegacyPayload(data)
         var sheet: Sheet
+        var wasLegacy = false
         do {
+            let data = try Data(contentsOf: fileURL)
+            wasLegacy = isLegacyPayload(data)
             sheet = wasLegacy
                 ? try JSONDecoder().decode(LegacyWeek.self, from: data).toSheet()
                 : try JSONDecoder().decode(Sheet.self, from: data)
         } catch {
             // We cannot interpret this file. Move it aside before rethrowing: the caller degrades
-            // to an empty sheet, and the user's first edit would otherwise save over the only
-            // copy of their items. Moving rather than copying means the next launch starts clean
-            // instead of failing forever.
+            // to an empty sheet, and the user's first edit would otherwise save over the only copy
+            // of their items. The read lives inside this `do` so a file we cannot even read off
+            // disk is quarantined too — the caller is about to overwrite it either way.
             try? quarantineUnreadableFile()
             throw error
         }
-        // Convert on disk so this branch runs exactly once per install.
-        if wasLegacy { try save(sheet) }
+        if wasLegacy {
+            // Keep the legacy file: the conversion is irreversible and drops the notes text.
+            try? fileManager.copyItem(at: fileURL, to: uniqueSibling(named: "week-legacy"))
+            // Best-effort: the sheet in hand is correct either way, and a failed write must not
+            // make the caller think there is no data — it would overwrite this file on the next edit.
+            try? save(sheet)
+        }
         sheet.validate()
         return sheet
     }
 
-    /// Renames an uninterpretable `week.json` so nothing can overwrite it. Named with today's
-    /// date, suffixed if that name is taken.
-    private func quarantineUnreadableFile() throws {
+    /// A sibling of `week.json` named `<base>-<today>.json`, suffixed if that name is taken.
+    private func uniqueSibling(named base: String) -> URL {
         let stamp = Sheet.formatDate(Date())
-        var dest = baseURL.appendingPathComponent("week-unreadable-\(stamp).json")
+        var dest = baseURL.appendingPathComponent("\(base)-\(stamp).json")
         var attempt = 2
         while fileManager.fileExists(atPath: dest.path) {
-            dest = baseURL.appendingPathComponent("week-unreadable-\(stamp)-\(attempt).json")
+            dest = baseURL.appendingPathComponent("\(base)-\(stamp)-\(attempt).json")
             attempt += 1
         }
-        try fileManager.moveItem(at: fileURL, to: dest)
+        return dest
+    }
+
+    /// Renames an uninterpretable `week.json` so nothing can overwrite it.
+    private func quarantineUnreadableFile() throws {
+        try fileManager.moveItem(at: fileURL, to: uniqueSibling(named: "week-unreadable"))
     }
 
     public func save(_ sheet: Sheet) throws {
@@ -67,7 +77,9 @@ public final class FileStore {
         var sheet = try load()
         let countBefore = sheet.buckets.count
         sheet.prune(now: now)
-        if sheet.buckets.count != countBefore { try save(sheet) }
+        // Best-effort: prune is recomputed on every load, so a failed write just means it retries
+        // next time — the in-memory sheet is correct either way (see load() above).
+        if sheet.buckets.count != countBefore { try? save(sheet) }
         return sheet
     }
 
