@@ -240,8 +240,9 @@ public final class WindowController: NSObject {
             &todayHotKeyRef
         )
 
+        // The one action not on control-option: option-command-minus, by request.
         RegisterEventHotKey(
-            UInt32(kVK_ANSI_Slash), modifiers,
+            UInt32(kVK_ANSI_Minus), UInt32(optionKey | cmdKey),
             EventHotKeyID(signature: sig, id: 7),
             GetApplicationEventTarget(), 0,
             &windowModeHotKeyRef

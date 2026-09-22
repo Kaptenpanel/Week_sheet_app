@@ -470,12 +470,28 @@ public struct SheetView: View {
     private var header: some View {
         HStack(alignment: .firstTextBaseline) {
             Text("WEEK SHEET").font(titleFont).foregroundColor(.black.opacity(0.8))
+            navArrow("\u{25C0}", enabled: viewModel.canStepBack()) { viewModel.stepBack() }
             Text(dateRangeText).font(smallMono).foregroundColor(labelDim)
+            navArrow("\u{25B6}", enabled: true) { viewModel.stepForward() }
             Spacer()
             if viewModel.isEditMode {
                 Text("EDIT MODE").font(smallMono).foregroundColor(labelDim)
             }
         }
+    }
+
+    /// A header navigation arrow. Dimmed rather than hidden when the step is unavailable, so the
+    /// retention horizon reads as a limit rather than as a control that silently does nothing.
+    private func navArrow(_ glyph: String, enabled: Bool, action: @escaping () -> Void) -> some View {
+        Text(glyph)
+            .font(smallMono)
+            .foregroundColor(enabled ? labelDim : labelDim.opacity(0.3))
+            .frame(width: 14, height: 14)
+            .contentShape(Rectangle())
+            .onTapGesture {
+                guard enabled, viewModel.isEditMode else { return }
+                action()
+            }
     }
 
     // MARK: Day columns

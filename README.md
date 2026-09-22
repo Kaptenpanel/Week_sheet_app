@@ -24,9 +24,11 @@ A macOS desktop widget that replaces the printed weekly planner sheet. It sits o
 | **⌃⌥←** | Step the window back one column (Sliding Days) or one week (Fixed Week) |
 | **⌃⌥→** | Step the window forward |
 | **⌃⌥0** | Jump back to today |
-| **⌃⌥/** | Toggle between Fixed Week and Sliding Days |
+| **⌥⌘-** | Toggle between Fixed Week and Sliding Days |
 
-Stepping back is capped by the retention window (see **Data Storage**): it does nothing once the previous step would show a window whose first column is already older than that horizon. In Fixed Week mode that horizon falls inside the current week on every day except the Monday that starts it, so the back shortcut only does something on Mondays; Sliding Days, which steps one column at a time, has much more room to move before hitting the same limit.
+The header also carries **◀ ▶** arrows beside the date range, which do the same thing as the two step shortcuts. Like every other control, they respond only in edit mode.
+
+Stepping back is capped by the retention window (see **Data Storage**): it does nothing once the previous step would show a window whose first column is already older than that horizon. The **◀** arrow dims when that is the case, so the limit is visible rather than a control that quietly does nothing. In Fixed Week mode that horizon falls inside the current week on every day except the Monday that starts it, so the back arrow is dimmed and the back shortcut inert on all other days; Sliding Days, which steps one column at a time, has much more room to move before hitting the same limit.
 
 ## Interactions (edit mode)
 

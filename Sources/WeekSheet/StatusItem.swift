@@ -60,8 +60,8 @@ public final class StatusItem {
             keyEquivalent: ""
         )
         windowModeItem.target = self
-        windowModeItem.keyEquivalentModifierMask = [.control, .option]
-        windowModeItem.keyEquivalent = "/"
+        windowModeItem.keyEquivalentModifierMask = [.option, .command]
+        windowModeItem.keyEquivalent = "-"
         menu.addItem(windowModeItem)
 
         menu.addItem(.separator())
