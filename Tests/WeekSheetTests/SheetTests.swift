@@ -418,53 +418,59 @@ final class SheetTests: XCTestCase {
         }
     }
 
-    // MARK: - Sheet: anchor stepping
+    // MARK: - Sheet: window stepping
 
-    func testWeekModeAnchorStepsAWholeWeek() {
-        let mon = Sheet.parseDate("2026-09-21")!
-        let back = Sheet.steppedAnchor(mon, by: -1, mode: .week)
-        XCTAssertEqual(Sheet.window(anchor: back, mode: .week).first?.id, "2026-09-14")
-        let forward = Sheet.steppedAnchor(mon, by: 1, mode: .week)
-        XCTAssertEqual(Sheet.window(anchor: forward, mode: .week).first?.id, "2026-09-28")
-    }
-
-    func testSlidingModeAnchorStepsOneBucket() {
-        let mon = Sheet.parseDate("2026-09-21")!
-        let back = Sheet.steppedAnchor(mon, by: -1, mode: .sliding)
-        XCTAssertEqual(BucketKey.containing(back).id, "2026-09-19")
-        let forward = Sheet.steppedAnchor(mon, by: 1, mode: .sliding)
-        XCTAssertEqual(BucketKey.containing(forward).id, "2026-09-22")
+    /// `Sheet.steppedAnchor(_:by:mode:)` used to branch on mode: a whole week per step in
+    /// `.week`, one bucket in `.sliding`. Stepping is now `BucketKey.stepped(by:)`, which takes
+    /// no mode at all -- from the same starting bucket it moves the window by exactly one
+    /// bucket, and that is now equally true whichever mode the window happens to be in.
+    func testSteppingMovesTheWindowByExactlyOneBucketInBothModes() {
+        let start = BucketKey("2026-09-22")!
+        for mode in [WindowMode.week, .sliding] {
+            XCTAssertEqual(Sheet.window(startingAt: start.stepped(by: -1)).first?.id, "2026-09-21", "\(mode)")
+            XCTAssertEqual(Sheet.window(startingAt: start.stepped(by: 1)).first?.id, "2026-09-23", "\(mode)")
+        }
     }
 
     // MARK: - Sheet: navigation clamp
 
-    func testCanStepBackOneWeekButNotTwo() {
+    /// From a Monday-aligned window, stepping back one bucket at a time reaches the horizon
+    /// after six steps: Mon 21 -> WKND 19 -> Fri 18 -> Thu 17 -> Wed 16 -> Tue 15 -> Mon 14,
+    /// whose `lastDate` (09-14) is exactly the horizon (`now` minus `retentionDays`, 09-21 minus
+    /// 7 days). The seventh step would land on WKND 12, whose `lastDate` (09-13) is one day past
+    /// it. This replaces the old whole-week clamp, which only ever allowed one step back; with
+    /// bucket-sized steps the same Monday window now allows six.
+    func testCanStepBackAllowsSixSingleBucketStepsFromAMondayWindowThenRefuses() {
         let now = Sheet.parseDate("2026-09-21")!
-        XCTAssertTrue(Sheet.canStepBack(from: now, mode: .week, now: now))
-        let oneBack = Sheet.steppedAnchor(now, by: -1, mode: .week)
-        XCTAssertFalse(Sheet.canStepBack(from: oneBack, mode: .week, now: now))
+        var start = BucketKey("2026-09-21")!
+        for _ in 0..<6 {
+            XCTAssertTrue(Sheet.canStepBack(from: start, now: now))
+            start = start.stepped(by: -1)
+        }
+        XCTAssertEqual(start.id, "2026-09-14")
+        XCTAssertFalse(Sheet.canStepBack(from: start, now: now))
     }
 
     func testCanStepBackStopsAtTheRetentionHorizon() {
         let now = Sheet.parseDate("2026-09-21")!
-        var anchor = now
+        var start = Sheet.windowStart(anchor: now, mode: .sliding)
         var steps = 0
-        while Sheet.canStepBack(from: anchor, mode: .sliding, now: now), steps < 20 {
-            anchor = Sheet.steppedAnchor(anchor, by: -1, mode: .sliding)
+        while Sheet.canStepBack(from: start, now: now), steps < 20 {
+            start = start.stepped(by: -1)
             steps += 1
         }
         XCTAssertLessThan(steps, 20, "clamp never engaged")
-        // The oldest reachable slot 0 must still be inside the 7-day horizon.
+        // The oldest reachable window start must still be inside the 7-day horizon.
         let horizon = Calendar.current.date(byAdding: .day, value: -Sheet.retentionDays,
                                             to: Calendar.current.startOfDay(for: now))!
-        let slot0 = Sheet.window(anchor: anchor, mode: .sliding)[0]
-        XCTAssertGreaterThanOrEqual(slot0.lastDate, horizon)
+        XCTAssertGreaterThanOrEqual(start.lastDate, horizon)
     }
 
     func testCanStepBackIsIndependentOfStoredData() {
         // An empty sheet must still navigate; the clamp is a date rule, not a data rule.
         let now = Sheet.parseDate("2026-09-21")!
-        XCTAssertTrue(Sheet.canStepBack(from: now, mode: .sliding, now: now))
+        let start = Sheet.windowStart(anchor: now, mode: .sliding)
+        XCTAssertTrue(Sheet.canStepBack(from: start, now: now))
     }
 
     // MARK: - Sheet: prune
@@ -832,18 +838,18 @@ final class SheetTests: XCTestCase {
     func testForwardThenBackReturnsToTheSameWindow() {
         let anchor = Sheet.parseDate("2026-09-21")!
         for mode in [WindowMode.week, .sliding] {
-            let start = Sheet.window(anchor: anchor, mode: mode)
-            let forward = Sheet.steppedAnchor(anchor, by: 1, mode: mode)
-            let back = Sheet.steppedAnchor(forward, by: -1, mode: mode)
-            XCTAssertEqual(Sheet.window(anchor: back, mode: mode), start, "\(mode)")
+            let start = Sheet.windowStart(anchor: anchor, mode: mode)
+            let forward = start.stepped(by: 1)
+            let back = forward.stepped(by: -1)
+            XCTAssertEqual(Sheet.window(startingAt: back), Sheet.window(startingAt: start), "\(mode)")
         }
     }
 
     func testForwardNavigationIsNeverClamped() {
         let now = Sheet.parseDate("2026-09-21")!
-        var anchor = now
-        for _ in 0..<50 { anchor = Sheet.steppedAnchor(anchor, by: 1, mode: .sliding) }
-        XCTAssertEqual(Sheet.window(anchor: anchor, mode: .sliding).count, 6)
+        var start = Sheet.windowStart(anchor: now, mode: .sliding)
+        for _ in 0..<50 { start = start.stepped(by: 1) }
+        XCTAssertEqual(Sheet.window(startingAt: start).count, 6)
     }
 
     // `testTickMovesTheWindowWhenTheWeekRollsOver` above already covers "midnight moves the
@@ -896,21 +902,24 @@ final class SheetTests: XCTestCase {
                        "goToToday must restore the follow-the-calendar behaviour")
     }
 
-    /// 2026-09-21 is a Monday: stepping the anchor back a week lands the target week's Monday
-    /// exactly on the 7-day retention horizon, so the back-step is allowed. See
-    /// `testCanStepBackOneWeekButNotTwo` for the `Sheet`-level version of this same fact.
-    func testStepBackFromAMondayAnchorMovesTheWindowAndStopsFollowingToday() {
+    /// Six single-bucket steps back from Monday 21 stay inside the 7-day retention horizon (see
+    /// `testCanStepBackAllowsSixSingleBucketStepsFromAMondayWindowThenRefuses` for the
+    /// arithmetic), so a single back-step from there is allowed. The old Monday-only limitation
+    /// -- a whole-week step was only ever permitted on a Monday -- no longer applies: bucket
+    /// steps are so much finer-grained that this fact about Monday specifically is no longer
+    /// interesting, but Monday remains a convenient, already-verified starting point.
+    func testStepBackMovesTheWindowOneBucketAndStopsFollowingToday() {
         let tmp = scratchDirectory()
         defer { try? FileManager.default.removeItem(at: tmp) }
         let viewModel = makeViewModel(tmp)
 
         let monday = Sheet.parseDate("2026-09-21")!
-        viewModel.anchor = monday
+        viewModel.windowStart = BucketKey("2026-09-21")!
 
         viewModel.stepBack(now: monday)
 
-        XCTAssertEqual(viewModel.window.first?.id, "2026-09-14",
-                       "a permitted back-step must move the window one week earlier")
+        XCTAssertEqual(viewModel.windowStart.id, "2026-09-19",
+                       "a permitted back-step must move the window one bucket earlier")
 
         // `followsToday` is private; observe its effect instead -- a tick that crosses a day
         // boundary must not snap the window back to today now that the user has navigated. The
@@ -922,27 +931,29 @@ final class SheetTests: XCTestCase {
         XCTAssertEqual(viewModel.window, navigated, "stepBack must clear followsToday")
     }
 
-    /// 2026-09-22 is a Tuesday: stepping the anchor back a week would land the target week's
-    /// Monday one day past the 7-day retention horizon, so the back-step is refused. This
-    /// asymmetry with the Monday case above is a consequence of the retention horizon, not a
-    /// bug -- week mode only permits a back-step on the one day a week the target week's Monday
-    /// is still in range.
-    func testStepBackFromATuesdayAnchorIsRefusedByTheRetentionHorizon() {
+    /// Parking the window on Monday 14 -- the bucket six single-bucket steps back from Monday 21
+    /// reaches (see `testCanStepBackAllowsSixSingleBucketStepsFromAMondayWindowThenRefuses`) --
+    /// means the very next step back is refused: it would land on WKND 12, whose `lastDate`
+    /// (09-13) is one day past the horizon. The old Tuesday-anchor version of this test pinned a
+    /// Monday-only rule -- a whole-week step being refused on every day but Monday -- that no
+    /// longer exists now that steps are bucket-sized, so this pins the horizon refusal itself
+    /// instead of a particular weekday.
+    func testStepBackAtTheRetentionHorizonIsRefusedAndChangesNothing() {
         let tmp = scratchDirectory()
         defer { try? FileManager.default.removeItem(at: tmp) }
         let viewModel = makeViewModel(tmp)
 
-        let tuesday = Sheet.parseDate("2026-09-22")!
-        viewModel.anchor = tuesday
+        let now = Sheet.parseDate("2026-09-21")!
+        viewModel.windowStart = BucketKey("2026-09-14")!
         let before = viewModel.window
 
-        viewModel.stepBack(now: tuesday)
+        viewModel.stepBack(now: now)
 
         XCTAssertEqual(viewModel.window, before, "a refused back-step must not move the window")
 
         // `followsToday` is private; observe its effect instead -- since nothing navigated, a
         // tick crossing a day boundary must still move the window with the calendar.
-        let nextWeek = Calendar.current.date(byAdding: .day, value: 7, to: tuesday)!
+        let nextWeek = Calendar.current.date(byAdding: .day, value: 7, to: now)!
         viewModel.tick(now: nextWeek)
         XCTAssertNotEqual(viewModel.window, before,
                           "with the back-step refused, followsToday must still be true")
@@ -959,16 +970,19 @@ final class SheetTests: XCTestCase {
         let viewModel = makeViewModel(tmp)
 
         let monday = Sheet.parseDate("2026-09-21")!
-        viewModel.anchor = monday
+        viewModel.windowStart = BucketKey("2026-09-21")!
 
         viewModel.startEditingFocus()
-        viewModel.stepForward() // anchor moves a week later; the field stays open
+        // Six single-bucket steps are exactly one week (BucketKey.stepped(by: 6) == +7 days --
+        // see testSixStepsForwardIsOneWeek), so this reliably lands the window in a different
+        // week while the field stays open.
+        for _ in 0..<6 { viewModel.stepForward() }
 
         viewModel.updateFocus("Typed while looking at a different week")
 
         XCTAssertEqual(viewModel.sheet.focus(for: monday), "Typed while looking at a different week",
                        "the text must land on the week the user was editing")
-        XCTAssertEqual(viewModel.sheet.focus(for: viewModel.anchor), "",
+        XCTAssertEqual(viewModel.sheet.focus(for: viewModel.focusAnchor), "",
                        "the week now on screen must be untouched")
     }
 
@@ -982,16 +996,18 @@ final class SheetTests: XCTestCase {
         let viewModel = makeViewModel(tmp)
 
         let monday = Sheet.parseDate("2026-09-21")!
-        viewModel.anchor = monday
+        viewModel.windowStart = BucketKey("2026-09-21")!
 
         viewModel.startEditingFocus()
         viewModel.cancelEditingFocus()
         XCTAssertFalse(viewModel.editingFocus, "cancelling must leave edit mode")
 
-        viewModel.stepForward() // anchor moves away from the week the cancelled edit was opened for
+        // Six single-bucket steps are exactly one week, moving the window away from the week the
+        // cancelled edit was opened for.
+        for _ in 0..<6 { viewModel.stepForward() }
         viewModel.updateFocus("Committed after a cancel, with no new startEditingFocus")
 
-        XCTAssertEqual(viewModel.sheet.focus(for: viewModel.anchor),
+        XCTAssertEqual(viewModel.sheet.focus(for: viewModel.focusAnchor),
                        "Committed after a cancel, with no new startEditingFocus",
                        "with the anchor cleared, this commit must fall back to the week now on screen")
         XCTAssertEqual(viewModel.sheet.focus(for: monday), "",
@@ -1008,10 +1024,9 @@ final class SheetTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: tmp) }
         let viewModel = makeViewModel(tmp)
 
-        let monday = Sheet.parseDate("2026-09-21")!
-        viewModel.anchor = monday
-        let tuesday = BucketKey("2026-09-22")!
-        let item = try viewModel.sheet.addItem(to: tuesday, text: "Off screen after navigating")
+        let monday = BucketKey("2026-09-21")!
+        viewModel.windowStart = monday
+        let item = try viewModel.sheet.addItem(to: monday, text: "Off screen after navigating")
         viewModel.select(item.id)
 
         viewModel.stepForward()
@@ -1019,7 +1034,7 @@ final class SheetTests: XCTestCase {
         XCTAssertNil(viewModel.selectedID, "navigation must clear a stale selection")
 
         viewModel.toggleDone()
-        XCTAssertEqual(viewModel.sheet.buckets[tuesday]?.first(where: { $0.id == item.id })?.done, false,
+        XCTAssertEqual(viewModel.sheet.buckets[monday]?.first(where: { $0.id == item.id })?.done, false,
                        "toggleDone must not be able to reach an item that is no longer on screen")
     }
 
@@ -1032,12 +1047,11 @@ final class SheetTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: tmp) }
         let viewModel = makeViewModel(tmp)
 
-        let monday = Sheet.parseDate("2026-09-21")!
-        viewModel.anchor = monday
-        let tuesday = BucketKey("2026-09-22")!
-        let item = try viewModel.sheet.addItem(to: tuesday, text: "Mid-edit")
+        let monday = BucketKey("2026-09-21")!
+        viewModel.windowStart = monday
+        let item = try viewModel.sheet.addItem(to: monday, text: "Mid-edit")
         viewModel.startEditing(item.id)
-        viewModel.addingBucket = BucketKey("2026-09-23")!
+        viewModel.addingBucket = monday
 
         viewModel.stepForward()
 
@@ -1130,7 +1144,7 @@ final class SheetTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: tmp) }
         let viewModel = makeViewModel(tmp)
         viewModel.windowMode = .sliding
-        viewModel.anchor = Sheet.parseDate("2026-09-22")! // Tuesday
+        viewModel.windowStart = Sheet.windowStart(anchor: Sheet.parseDate("2026-09-22")!, mode: .sliding) // Tuesday
 
         let thursday = BucketKey("2026-09-24")!
         let item = try viewModel.sheet.addItem(to: thursday, text: "Still on screen after one step")
@@ -1151,7 +1165,7 @@ final class SheetTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: tmp) }
         let viewModel = makeViewModel(tmp)
         viewModel.windowMode = .sliding
-        viewModel.anchor = Sheet.parseDate("2026-09-22")! // Tuesday
+        viewModel.windowStart = Sheet.windowStart(anchor: Sheet.parseDate("2026-09-22")!, mode: .sliding) // Tuesday
 
         let monday = BucketKey("2026-09-21")!
         let item = try viewModel.sheet.addItem(to: monday, text: "Scrolled off after one step")
@@ -1209,7 +1223,7 @@ final class SheetTests: XCTestCase {
         let nextMonday = BucketKey.containing(Calendar.current.date(byAdding: .day, value: 3, to: fridayOfThisWeek)!)
 
         viewModel.windowMode = .sliding
-        viewModel.anchor = fridayOfThisWeek
+        viewModel.windowStart = Sheet.windowStart(anchor: fridayOfThisWeek, mode: .sliding)
         let item = try viewModel.sheet.addItem(to: nextMonday, text: "Reached only by the sliding shape")
         viewModel.select(item.id)
 
@@ -1289,7 +1303,7 @@ final class SheetTests: XCTestCase {
         let viewModel = makeViewModel(tmp)
 
         viewModel.stepForward() // any step sets followsToday = false, on any real weekday or mode
-        viewModel.anchor = Sheet.parseDate("2026-01-05")! // frozen here; followsToday stays false
+        viewModel.windowStart = BucketKey("2026-01-05")! // frozen here; followsToday stays false
 
         let bucket = viewModel.window[0]
         let item = try viewModel.sheet.addItem(to: bucket, text: "Parked and about to be pruned")
@@ -1316,7 +1330,7 @@ final class SheetTests: XCTestCase {
         let viewModel = makeViewModel(tmp)
 
         viewModel.stepForward()
-        viewModel.anchor = Sheet.parseDate("2026-01-05")!
+        viewModel.windowStart = BucketKey("2026-01-05")!
 
         let bucket = viewModel.window[0]
         _ = try viewModel.sheet.addItem(to: bucket, text: "Unrelated to the idea, pruned anyway")
