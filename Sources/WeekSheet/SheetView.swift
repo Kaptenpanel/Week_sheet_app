@@ -226,6 +226,14 @@ public final class SheetViewModel: ObservableObject {
         save()
     }
 
+    /// Leaves focus-editing without committing. Narrower than `cancelEditing()`: it clears only the
+    /// focus field's own state, not selection or other in-progress edits a plain cancel has no
+    /// business touching.
+    func cancelEditingFocus() {
+        editingFocus = false
+        editingFocusAnchor = nil
+    }
+
     func moveItemToBucket(_ id: UUID, bucket: BucketKey, position: Int) {
         do {
             try sheet.moveItem(id, to: bucket, at: position)
@@ -662,7 +670,7 @@ public struct SheetView: View {
                     InlineTextField(
                         text: viewModel.sheet.focus(for: viewModel.anchor),
                         onCommit: { viewModel.updateFocus($0) },
-                        onCancel: { viewModel.editingFocus = false }
+                        onCancel: { viewModel.cancelEditingFocus() }
                     ).frame(maxWidth: .infinity)
                 }
             }

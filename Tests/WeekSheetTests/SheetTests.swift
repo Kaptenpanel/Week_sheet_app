@@ -935,6 +935,32 @@ final class SheetTests: XCTestCase {
                        "the week now on screen must be untouched")
     }
 
+    /// `editingFocusAnchor` is private, so this observes it through `updateFocus`'s fallback
+    /// instead: if `cancelEditingFocus()` failed to clear it, a later `updateFocus` reached without
+    /// an intervening `startEditingFocus()` would still resolve to the cancelled week, not the one
+    /// currently on screen.
+    func testCancelingFocusEditClearsTheBoundAnchor() {
+        let tmp = scratchDirectory()
+        defer { try? FileManager.default.removeItem(at: tmp) }
+        let viewModel = makeViewModel(tmp)
+
+        let monday = Sheet.parseDate("2026-09-21")!
+        viewModel.anchor = monday
+
+        viewModel.startEditingFocus()
+        viewModel.cancelEditingFocus()
+        XCTAssertFalse(viewModel.editingFocus, "cancelling must leave edit mode")
+
+        viewModel.stepForward() // anchor moves away from the week the cancelled edit was opened for
+        viewModel.updateFocus("Committed after a cancel, with no new startEditingFocus")
+
+        XCTAssertEqual(viewModel.sheet.focus(for: viewModel.anchor),
+                       "Committed after a cancel, with no new startEditingFocus",
+                       "with the anchor cleared, this commit must fall back to the week now on screen")
+        XCTAssertEqual(viewModel.sheet.focus(for: monday), "",
+                       "the cancelled week must be untouched by a later, unrelated commit")
+    }
+
     /// Regression: `selectedID` used to die with `cancelEditing()` on every navigation. Without
     /// that, it survives, and `deleteItem`/`toggleDone` search every bucket rather than just the
     /// window -- so a stale selection lets Space/Delete reach an item that is no longer on screen.
