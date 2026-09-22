@@ -16,6 +16,7 @@ public final class WindowController: NSObject {
     private var backHotKeyRef: EventHotKeyRef?
     private var forwardHotKeyRef: EventHotKeyRef?
     private var todayHotKeyRef: EventHotKeyRef?
+    private var windowModeHotKeyRef: EventHotKeyRef?
     private var globalClickMonitor: Any?
     private var cancellables = Set<AnyCancellable>()
     private(set) var isSheetHidden = false
@@ -101,6 +102,7 @@ public final class WindowController: NSObject {
         if let ref = backHotKeyRef { UnregisterEventHotKey(ref) }
         if let ref = forwardHotKeyRef { UnregisterEventHotKey(ref) }
         if let ref = todayHotKeyRef { UnregisterEventHotKey(ref) }
+        if let ref = windowModeHotKeyRef { UnregisterEventHotKey(ref) }
         if let m = globalClickMonitor { NSEvent.removeMonitor(m) }
     }
 
@@ -147,6 +149,7 @@ public final class WindowController: NSObject {
     @objc public func stepBack() { viewModel.stepBack() }
     @objc public func stepForward() { viewModel.stepForward() }
     @objc public func goToToday() { viewModel.goToToday() }
+    @objc public func toggleWindowMode() { viewModel.toggleWindowMode() }
 
     private func enterEditMode() {
         viewModel.installKeyHandler()
@@ -236,6 +239,13 @@ public final class WindowController: NSObject {
             GetApplicationEventTarget(), 0,
             &todayHotKeyRef
         )
+
+        RegisterEventHotKey(
+            UInt32(kVK_ANSI_Slash), modifiers,
+            EventHotKeyID(signature: sig, id: 7),
+            GetApplicationEventTarget(), 0,
+            &windowModeHotKeyRef
+        )
     }
 }
 
@@ -264,6 +274,7 @@ private func hotKeyHandler(
         case 4: controller.stepBack()
         case 5: controller.stepForward()
         case 6: controller.goToToday()
+        case 7: controller.toggleWindowMode()
         default: break
         }
     }

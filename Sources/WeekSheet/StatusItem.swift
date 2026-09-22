@@ -54,6 +54,16 @@ public final class StatusItem {
         layoutItem.keyEquivalent = "."
         menu.addItem(layoutItem)
 
+        let windowModeItem = NSMenuItem(
+            title: UserDefaults.standard.bool(forKey: "slidingMode") ? "Fixed Week" : "Sliding Days",
+            action: #selector(toggleWindowModeFromMenu),
+            keyEquivalent: ""
+        )
+        windowModeItem.target = self
+        windowModeItem.keyEquivalentModifierMask = [.control, .option]
+        windowModeItem.keyEquivalent = "/"
+        menu.addItem(windowModeItem)
+
         menu.addItem(.separator())
 
         let loginItem = NSMenuItem(
@@ -84,6 +94,11 @@ public final class StatusItem {
 
     @objc private func toggleLayoutFromMenu() {
         windowController.toggleLayoutMode()
+        statusItem.menu = buildMenu()
+    }
+
+    @objc private func toggleWindowModeFromMenu() {
+        windowController.toggleWindowMode()
         statusItem.menu = buildMenu()
     }
 

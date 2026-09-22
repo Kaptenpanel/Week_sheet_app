@@ -43,8 +43,8 @@ public final class SheetViewModel: ObservableObject {
     @Published private(set) var undoState: UndoInfo?
     @Published var shakingBucket: BucketKey?
     @Published var isHorizontalMode: Bool
-    /// Which six buckets to render. Week mode until Task 8 adds the toggle.
-    @Published var windowMode: WindowMode = .week
+    /// Which six buckets to render. Persisted the same way isHorizontalMode is.
+    @Published var windowMode: WindowMode
     /// The date the window is built around. View state — never persisted, so a relaunch
     /// always opens on today.
     @Published var anchor = Date()
@@ -69,6 +69,7 @@ public final class SheetViewModel: ObservableObject {
     public init(store: FileStore) {
         self.store = store
         self.isHorizontalMode = UserDefaults.standard.bool(forKey: "horizontalMode")
+        self.windowMode = UserDefaults.standard.bool(forKey: "slidingMode") ? .sliding : .week
         self.sheet = (try? store.loadAndPrune()) ?? .empty()
         let timer = Timer(timeInterval: 60, repeats: true) { [weak self] _ in
             self?.tick()
@@ -245,30 +246,35 @@ public final class SheetViewModel: ObservableObject {
         UserDefaults.standard.set(isHorizontalMode, forKey: "horizontalMode")
     }
 
-    // MARK: Navigation
-
-    /// True when `id` belongs to an idea rather than a day bucket. This is the discriminator for
-    /// "is this id's view still mounted after a navigation", and it is exhaustive only because
-    /// those are the only two places an `Item` can live. A third surface that is not window-gated
-    /// would need its own case here, or an in-progress edit there would be silently discarded.
-    private func isIdea(_ id: UUID) -> Bool {
-        sheet.ideas.contains { $0.id == id }
+    func toggleWindowMode() {
+        windowMode = (windowMode == .sliding) ? .week : .sliding
+        UserDefaults.standard.set(windowMode == .sliding, forKey: "slidingMode")
+        // The anchor means different things in the two modes; today is the only safe common
+        // ground, and it is where the user expects to land after switching.
+        goToToday()
     }
 
-    /// Navigation replaces every key in the window, so a bucket-item field is unmounted — but its
-    /// flag outlives it, and the key handler skips Space/Delete/Escape while one is set, which
-    /// leaves the keyboard dead until the user clicks elsewhere. Selection goes too: `deleteItem`
-    /// searches every bucket, so a stale selection would let Delete remove an item that is no
-    /// longer on screen.
+    // MARK: Navigation
+
+    /// The bucket holding `id`, or nil if it is not in any bucket — an idea, or an id that no
+    /// longer exists. Anything without a bucket is not window-bound, so it survives navigation.
+    private func bucketHolding(_ id: UUID) -> BucketKey? {
+        sheet.buckets.first { $0.value.contains { $0.id == id } }?.key
+    }
+
+    /// Drops editing state whose bucket is no longer on screen. A field the window has scrolled
+    /// away from is already unmounted, and its flag outliving it dead-zones the key handler;
+    /// a selection the user can no longer see would still let Delete reach the item, because
+    /// `deleteItem` searches every bucket rather than the window.
     ///
-    /// Ideas are exempt from all of it. `ideasPanel` is not window-gated, so an idea's chip, its
-    /// selection and an in-progress rename all survive a navigation still visible -- clearing them
-    /// would unmount a live field and lose typed text, or deselect something the user can still
-    /// see. `addingIdea` and `editingReminder` are left alone for the same reason.
-    private func clearWindowBoundEditingState() {
-        addingBucket = nil
-        if let id = editingID, !isIdea(id) { editingID = nil }
-        if let id = selectedID, !isIdea(id) { selectedID = nil }
+    /// Membership in the current window is the fact, not a stand-in for it: nothing that is still
+    /// visible is ever cleared, so this is correct in both modes, correct when a mode switch
+    /// changes the window's shape without moving the anchor, and a no-op when nothing moved.
+    private func dropEditingStateOutsideTheWindow() {
+        let visible = Set(window)
+        if let key = addingBucket, !visible.contains(key) { addingBucket = nil }
+        if let id = editingID, let key = bucketHolding(id), !visible.contains(key) { editingID = nil }
+        if let id = selectedID, let key = bucketHolding(id), !visible.contains(key) { selectedID = nil }
     }
 
     func canStepBack(now: Date = Date()) -> Bool {
@@ -277,24 +283,21 @@ public final class SheetViewModel: ObservableObject {
 
     func stepBack(now: Date = Date()) {
         guard canStepBack(now: now) else { return }
-        let before = window
         anchor = Sheet.steppedAnchor(anchor, by: -1, mode: windowMode)
         followsToday = false
-        if window != before { clearWindowBoundEditingState() }
+        dropEditingStateOutsideTheWindow()
     }
 
     func stepForward() {
-        let before = window
         anchor = Sheet.steppedAnchor(anchor, by: 1, mode: windowMode)
         followsToday = false
-        if window != before { clearWindowBoundEditingState() }
+        dropEditingStateOutsideTheWindow()
     }
 
     func goToToday() {
-        let before = window
         anchor = Date()
         followsToday = true
-        if window != before { clearWindowBoundEditingState() }
+        dropEditingStateOutsideTheWindow()
     }
 
     // MARK: Key handler

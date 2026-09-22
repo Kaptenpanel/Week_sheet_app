@@ -1053,4 +1053,112 @@ final class SheetTests: XCTestCase {
         XCTAssertEqual(viewModel.editingID, item.id,
                        "goToToday must not clear an edit when the window did not actually move")
     }
+
+    // MARK: - Sliding mode
+
+    /// Regression: `clearWindowBoundEditingState()` used `window != before` as a proxy for "did
+    /// this id's bucket leave the window". That proxy is exact in week mode, where a step replaces
+    /// every key, but a single sliding step keeps five of the six buckets -- so the old proxy would
+    /// have deselected an item that is still plainly on screen. `dropEditingStateOutsideTheWindow()`
+    /// checks membership directly, so this case -- unreachable before sliding mode existed -- must
+    /// now survive.
+    func testSlidingModeKeepsAStillVisibleSelectionAfterOneStep() throws {
+        let tmp = scratchDirectory()
+        defer { try? FileManager.default.removeItem(at: tmp) }
+        let viewModel = makeViewModel(tmp)
+        viewModel.windowMode = .sliding
+        viewModel.anchor = Sheet.parseDate("2026-09-22")! // Tuesday
+
+        let thursday = BucketKey("2026-09-24")!
+        let item = try viewModel.sheet.addItem(to: thursday, text: "Still on screen after one step")
+        viewModel.select(item.id)
+
+        viewModel.stepForward()
+
+        XCTAssertTrue(viewModel.window.contains(thursday),
+                      "sanity: Thursday's bucket survives a single sliding step")
+        XCTAssertEqual(viewModel.selectedID, item.id,
+                       "a selection whose bucket is still in the window must survive navigation")
+    }
+
+    /// Companion to the test above: a sliding step still drops a selection whose bucket actually
+    /// scrolled off the front of the window, same as week mode has always done.
+    func testSlidingModeDropsASelectionThatSlidOffTheWindow() throws {
+        let tmp = scratchDirectory()
+        defer { try? FileManager.default.removeItem(at: tmp) }
+        let viewModel = makeViewModel(tmp)
+        viewModel.windowMode = .sliding
+        viewModel.anchor = Sheet.parseDate("2026-09-22")! // Tuesday
+
+        let monday = BucketKey("2026-09-21")!
+        let item = try viewModel.sheet.addItem(to: monday, text: "Scrolled off after one step")
+        viewModel.select(item.id)
+
+        viewModel.stepForward()
+
+        XCTAssertFalse(viewModel.window.contains(monday),
+                       "sanity: Monday's bucket is the one a forward step drops")
+        XCTAssertNil(viewModel.selectedID, "a selection whose bucket left the window must still be cleared")
+    }
+
+    /// `followsToday` was only ever exercised in week mode, since `windowMode` was hardcoded until
+    /// this task. Mirrors `testTickDoesNotMoveTheWindowAtMidnightAfterTheUserHasNavigated` and
+    /// `testGoToTodayRestoresFollowingTheCalendar`, but in sliding mode, where a day rolling over
+    /// moves the window by one bucket rather than by a week.
+    func testFollowsTodayGovernsTheSlidingWindowAcrossADayRollover() {
+        let tmp = scratchDirectory()
+        defer { try? FileManager.default.removeItem(at: tmp) }
+        let viewModel = makeViewModel(tmp)
+        viewModel.windowMode = .sliding
+
+        viewModel.stepForward()
+        let navigated = viewModel.window
+
+        let twoWeeksOut = Calendar.current.date(byAdding: .day, value: 14, to: Date())!
+        viewModel.tick(now: twoWeeksOut)
+        XCTAssertEqual(viewModel.window, navigated,
+                       "midnight must not yank the sliding window back to today once the user has navigated")
+
+        viewModel.goToToday()
+        let nextWeek = Calendar.current.date(byAdding: .day, value: 7, to: Date())!
+        viewModel.tick(now: nextWeek)
+        XCTAssertEqual(viewModel.window, Sheet.window(anchor: nextWeek, mode: .sliding),
+                       "goToToday must restore the sliding window's tracking of the calendar")
+    }
+
+    /// Regression guard for the subtlety in `toggleWindowMode()`: it resets the anchor to today via
+    /// `goToToday()`, so a naive `window != before` guard inside `goToToday()` would capture
+    /// `before` *after* `windowMode` had already changed -- comparing the new mode's window against
+    /// itself at nearly the same instant, which is equal almost always, since the anchor did not
+    /// move. That would silently skip the clear precisely when the mode switch is what moved a
+    /// bucket out from under a selection, not a navigation. Built from `Date()`-relative days so it
+    /// does not depend on which real weekday the suite runs on.
+    func testTogglingWindowModeDropsStateForABucketTheShapeChangeRemoved() throws {
+        let tmp = scratchDirectory()
+        defer {
+            try? FileManager.default.removeItem(at: tmp)
+            UserDefaults.standard.removeObject(forKey: "slidingMode")
+        }
+        let viewModel = makeViewModel(tmp)
+
+        let mondayOfThisWeek = BucketKey.monday(of: Date()).firstDate
+        let fridayOfThisWeek = Calendar.current.date(byAdding: .day, value: 4, to: mondayOfThisWeek)!
+        let nextMonday = BucketKey.containing(Calendar.current.date(byAdding: .day, value: 3, to: fridayOfThisWeek)!)
+
+        viewModel.windowMode = .sliding
+        viewModel.anchor = fridayOfThisWeek
+        let item = try viewModel.sheet.addItem(to: nextMonday, text: "Reached only by the sliding shape")
+        viewModel.select(item.id)
+
+        XCTAssertTrue(viewModel.window.contains(nextMonday),
+                      "sanity: a Friday sliding anchor reaches one bucket into next week")
+
+        viewModel.toggleWindowMode()
+
+        XCTAssertEqual(viewModel.windowMode, .week)
+        XCTAssertFalse(viewModel.window.contains(nextMonday),
+                       "sanity: the toggle's own window no longer reaches that Monday")
+        XCTAssertNil(viewModel.selectedID,
+                     "the mode switch must drop selection for a bucket its own shape change removed")
+    }
 }
