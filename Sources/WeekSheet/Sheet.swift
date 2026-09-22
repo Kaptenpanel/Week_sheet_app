@@ -339,37 +339,38 @@ public struct Sheet: Equatable, Codable {
 
     // MARK: - Window
 
-    /// The six buckets to render. Week mode starts at the anchor's Monday; sliding mode starts
-    /// one bucket earlier than the anchor's own, which puts the anchor in slot 1 on every day of
-    /// the week — Sunday included, because Sunday shares Saturday's bucket.
+    /// The six buckets to render, given the bucket in slot 0.
+    public static func window(startingAt start: BucketKey) -> [BucketKey] {
+        (0..<6).map { start.stepped(by: $0) }
+    }
+
+    /// Where the window sits when it is anchored to today rather than navigated: the anchor's
+    /// Monday in week mode, or one bucket before the anchor's own in sliding mode, which puts the
+    /// anchor in slot 1 on every day of the week — Sunday included, because Sunday shares
+    /// Saturday's bucket.
+    ///
+    /// This is the *only* thing the mode decides. Navigation moves the window one bucket at a time
+    /// in both modes, so once the user has stepped away, a week-mode window is no longer
+    /// Monday-aligned — it is wherever they scrolled it to.
+    public static func windowStart(anchor: Date, mode: WindowMode) -> BucketKey {
+        switch mode {
+        case .week:
+            return BucketKey.monday(of: anchor)
+        case .sliding:
+            return BucketKey.containing(anchor).stepped(by: -1)
+        }
+    }
+
+    /// The six buckets to render for a window anchored to `anchor`.
     public static func window(anchor: Date, mode: WindowMode) -> [BucketKey] {
-        let start: BucketKey
-        switch mode {
-        case .week:
-            start = BucketKey.monday(of: anchor)
-        case .sliding:
-            start = BucketKey.containing(anchor).stepped(by: -1)
-        }
-        return (0..<6).map { start.stepped(by: $0) }
+        window(startingAt: windowStart(anchor: anchor, mode: mode))
     }
 
-    /// Moves the anchor by `n` steps — a whole week in week mode, a single bucket in sliding mode.
-    public static func steppedAnchor(_ anchor: Date, by n: Int, mode: WindowMode) -> Date {
-        switch mode {
-        case .week:
-            return Calendar.current.date(byAdding: .day, value: 7 * n, to: anchor) ?? anchor
-        case .sliding:
-            return BucketKey.containing(anchor).stepped(by: n).firstDate
-        }
-    }
-
-    /// Whether stepping back once would still land inside the retention horizon. Deliberately a
-    /// date rule rather than a data rule: an empty past must still be navigable.
-    public static func canStepBack(from anchor: Date, mode: WindowMode, now: Date = Date()) -> Bool {
+    /// Whether moving the window back one bucket would still land inside the retention horizon.
+    /// Deliberately a date rule rather than a data rule: an empty past must still be navigable.
+    public static func canStepBack(from start: BucketKey, now: Date = Date()) -> Bool {
         guard let horizon = Self.horizon(now: now) else { return false }
-        let previous = steppedAnchor(anchor, by: -1, mode: mode)
-        guard let slotZero = window(anchor: previous, mode: mode).first else { return false }
-        return slotZero.lastDate >= horizon
+        return start.stepped(by: -1).lastDate >= horizon
     }
 
     // MARK: - Prune

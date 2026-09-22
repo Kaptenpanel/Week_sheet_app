@@ -16,7 +16,6 @@ public final class WindowController: NSObject {
     private var backHotKeyRef: EventHotKeyRef?
     private var forwardHotKeyRef: EventHotKeyRef?
     private var todayHotKeyRef: EventHotKeyRef?
-    private var windowModeHotKeyRef: EventHotKeyRef?
     private var globalClickMonitor: Any?
     private var cancellables = Set<AnyCancellable>()
     private(set) var isSheetHidden = false
@@ -102,7 +101,6 @@ public final class WindowController: NSObject {
         if let ref = backHotKeyRef { UnregisterEventHotKey(ref) }
         if let ref = forwardHotKeyRef { UnregisterEventHotKey(ref) }
         if let ref = todayHotKeyRef { UnregisterEventHotKey(ref) }
-        if let ref = windowModeHotKeyRef { UnregisterEventHotKey(ref) }
         if let m = globalClickMonitor { NSEvent.removeMonitor(m) }
     }
 
@@ -239,14 +237,8 @@ public final class WindowController: NSObject {
             GetApplicationEventTarget(), 0,
             &todayHotKeyRef
         )
-
-        // The one action not on control-option: option-command-minus, by request.
-        RegisterEventHotKey(
-            UInt32(kVK_ANSI_Minus), UInt32(optionKey | cmdKey),
-            EventHotKeyID(signature: sig, id: 7),
-            GetApplicationEventTarget(), 0,
-            &windowModeHotKeyRef
-        )
+        // Follow Today has no hotkey: it is a setting you pick once, not an action you repeat, so
+        // it lives only in the menu bar.
     }
 }
 
@@ -275,7 +267,6 @@ private func hotKeyHandler(
         case 4: controller.stepBack()
         case 5: controller.stepForward()
         case 6: controller.goToToday()
-        case 7: controller.toggleWindowMode()
         default: break
         }
     }

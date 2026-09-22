@@ -10,7 +10,7 @@ A macOS desktop widget that replaces the printed weekly planner sheet. It sits o
 - **New Ideas** inbox for undecided items, shown as dashed-border chips
 - **Weekly Focus** — one line, kept per calendar week (keyed by that week's Monday); navigate to another week and you see that week's own line
 - **No weekly reset** — day items just age out once more than 7 days have passed; a weekend's items are graded by Sunday rather than Saturday, so they get the full week too
-- **Two window modes** — Fixed Week (Monday-start, default) or Sliding Days (today always sits in the second column); switch anytime
+- **Follow Today** — a setting in the menu bar. Off (the default), the window starts on Monday; on, today sits in the second column. It decides only where the window lands when it snaps back to today, since navigation moves one column at a time either way
 - **Two layouts** — vertical (default) and horizontal; switch anytime
 - Lives on the desktop at 85% opacity; press **⌃⌥Space** (or use the menu bar icon) to enter edit mode
 
@@ -21,14 +21,15 @@ A macOS desktop widget that replaces the printed weekly planner sheet. It sits o
 | **⌃⌥Space** | Toggle edit mode |
 | **⌃⌥M** | Hide / show sheet |
 | **⌃⌥.** | Switch between vertical and horizontal layout |
-| **⌃⌥←** | Step the window back one column (Sliding Days) or one week (Fixed Week) |
+| **⌃⌥←** | Step the window back one column |
 | **⌃⌥→** | Step the window forward |
-| **⌃⌥0** | Jump back to today |
-| **⌥⌘-** | Toggle between Fixed Week and Sliding Days |
+| **⌃⌥0** | Jump back to today, re-framed by the **Follow Today** setting |
+
+**Follow Today** has no shortcut — it is a setting you pick once, so it lives only in the menu bar icon.
 
 The header also carries **◀ ▶** arrows beside the date range, which do the same thing as the two step shortcuts. Like every other control, they respond only in edit mode.
 
-Stepping back is capped by the retention window (see **Data Storage**): it does nothing once the previous step would show a window whose first column is already older than that horizon. The **◀** arrow dims when that is the case, so the limit is visible rather than a control that quietly does nothing. In Fixed Week mode that horizon falls inside the current week on every day except the Monday that starts it, so the back arrow is dimmed and the back shortcut inert on all other days; Sliding Days, which steps one column at a time, has much more room to move before hitting the same limit.
+Both step one column at a time whatever the setting, so a Monday-start window stops being Monday-aligned once you navigate; it re-aligns on the next jump back to today. Stepping back is capped by the retention window (see **Data Storage**): it stops once the next step would show a first column older than that horizon. The **◀** arrow dims when that happens, so the limit is visible rather than a control that quietly does nothing.
 
 ## Interactions (edit mode)
 

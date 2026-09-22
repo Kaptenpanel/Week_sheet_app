@@ -54,15 +54,17 @@ public final class StatusItem {
         layoutItem.keyEquivalent = "."
         menu.addItem(layoutItem)
 
-        let windowModeItem = NSMenuItem(
-            title: UserDefaults.standard.bool(forKey: "slidingMode") ? "Fixed Week" : "Sliding Days",
+        // A setting rather than an action: checked, the window keeps today in the second column;
+        // unchecked, it starts on Monday. Either way navigation moves one column at a time, so
+        // this only decides where the window sits when it snaps back to today.
+        let followTodayItem = NSMenuItem(
+            title: "Follow Today",
             action: #selector(toggleWindowModeFromMenu),
             keyEquivalent: ""
         )
-        windowModeItem.target = self
-        windowModeItem.keyEquivalentModifierMask = [.option, .command]
-        windowModeItem.keyEquivalent = "-"
-        menu.addItem(windowModeItem)
+        followTodayItem.target = self
+        followTodayItem.state = UserDefaults.standard.bool(forKey: "slidingMode") ? .on : .off
+        menu.addItem(followTodayItem)
 
         menu.addItem(.separator())
 

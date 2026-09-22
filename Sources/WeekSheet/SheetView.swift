@@ -45,9 +45,10 @@ public final class SheetViewModel: ObservableObject {
     @Published var isHorizontalMode: Bool
     /// Which six buckets to render. Persisted the same way isHorizontalMode is.
     @Published var windowMode: WindowMode
-    /// The date the window is built around. View state — never persisted, so a relaunch
-    /// always opens on today.
-    @Published var anchor = Date()
+    /// The bucket in slot 0 — the single source of truth for what is on screen. Navigation moves
+    /// it one bucket at a time in both modes; the mode only decides where it lands when the window
+    /// snaps back to today. View state, never persisted, so a relaunch always opens on today.
+    @Published var windowStart: BucketKey
     /// Start of the current day. Published so the sheet redraws when the date rolls over.
     @Published private(set) var today = Calendar.current.startOfDay(for: Date())
     /// True while the window should track the calendar. Deliberate navigation clears it;
@@ -64,12 +65,28 @@ public final class SheetViewModel: ObservableObject {
 
     struct UndoInfo { let item: Item; let bucket: BucketKey?; let position: Int }
 
-    var window: [BucketKey] { Sheet.window(anchor: anchor, mode: windowMode) }
+    var window: [BucketKey] { Sheet.window(startingAt: windowStart) }
+
+    /// The week the Weekly Focus line belongs to. In sliding mode the window straddles two weeks
+    /// and the line belongs to the week of slot 1 — the column the mode keeps today in — which is
+    /// the week `focus(for:)` keyed off before navigation became bucket-by-bucket.
+    var focusAnchor: Date {
+        windowStart.stepped(by: windowMode == .sliding ? 1 : 0).firstDate
+    }
+
+    /// Where the window sits when it snaps back to today. Recomputed on launch, on `goToToday()`,
+    /// on a midnight rollover while following, and on a mode switch — the four moments the mode
+    /// gets to position the window. Navigation never uses it.
+    private func startSnappedToToday(_ now: Date = Date()) -> BucketKey {
+        Sheet.windowStart(anchor: now, mode: windowMode)
+    }
 
     public init(store: FileStore) {
         self.store = store
         self.isHorizontalMode = UserDefaults.standard.bool(forKey: "horizontalMode")
-        self.windowMode = UserDefaults.standard.bool(forKey: "slidingMode") ? .sliding : .week
+        let mode: WindowMode = UserDefaults.standard.bool(forKey: "slidingMode") ? .sliding : .week
+        self.windowMode = mode
+        self.windowStart = Sheet.windowStart(anchor: Date(), mode: mode)
         self.sheet = (try? store.loadAndPrune()) ?? .empty()
         let timer = Timer(timeInterval: 60, repeats: true) { [weak self] _ in
             self?.tick()
@@ -103,7 +120,7 @@ public final class SheetViewModel: ObservableObject {
         if start != today {
             today = start
             if followsToday {
-                anchor = now
+                windowStart = startSnappedToToday(now)
                 dropEditingStateOutsideTheWindow()
             }
         }
@@ -219,13 +236,13 @@ public final class SheetViewModel: ObservableObject {
 
     func startEditingFocus() {
         editingFocus = true
-        editingFocusAnchor = anchor
+        editingFocusAnchor = focusAnchor
         editingID = nil; selectedID = nil; addingBucket = nil; addingIdea = false
     }
 
     func updateFocus(_ text: String) {
         editingFocus = false
-        sheet.setFocus(text.trimmingCharacters(in: .whitespaces), for: editingFocusAnchor ?? anchor)
+        sheet.setFocus(text.trimmingCharacters(in: .whitespaces), for: editingFocusAnchor ?? focusAnchor)
         editingFocusAnchor = nil
         save()
     }
@@ -268,8 +285,8 @@ public final class SheetViewModel: ObservableObject {
     func toggleWindowMode() {
         windowMode = (windowMode == .sliding) ? .week : .sliding
         UserDefaults.standard.set(windowMode == .sliding, forKey: "slidingMode")
-        // The anchor means different things in the two modes; today is the only safe common
-        // ground, and it is where the user expects to land after switching.
+        // Switching reasserts the mode's own framing, which is the one moment the mode gets to
+        // reposition the window — navigation never does.
         goToToday()
     }
 
@@ -320,24 +337,28 @@ public final class SheetViewModel: ObservableObject {
     }
 
     func canStepBack(now: Date = Date()) -> Bool {
-        Sheet.canStepBack(from: anchor, mode: windowMode, now: now)
+        Sheet.canStepBack(from: windowStart, now: now)
     }
 
+    /// Both steps move exactly one bucket, in both modes — the arrows and their shortcuts scroll
+    /// the window day by day rather than a week at a time, so a week-mode window stops being
+    /// Monday-aligned as soon as the user navigates. The mode reasserts itself on the next snap
+    /// back to today.
     func stepBack(now: Date = Date()) {
         guard canStepBack(now: now) else { return }
-        anchor = Sheet.steppedAnchor(anchor, by: -1, mode: windowMode)
+        windowStart = windowStart.stepped(by: -1)
         followsToday = false
         dropEditingStateOutsideTheWindow()
     }
 
     func stepForward() {
-        anchor = Sheet.steppedAnchor(anchor, by: 1, mode: windowMode)
+        windowStart = windowStart.stepped(by: 1)
         followsToday = false
         dropEditingStateOutsideTheWindow()
     }
 
     func goToToday() {
-        anchor = Date()
+        windowStart = startSnappedToToday()
         followsToday = true
         dropEditingStateOutsideTheWindow()
     }
@@ -468,7 +489,7 @@ public struct SheetView: View {
     // MARK: Header
 
     private var header: some View {
-        HStack(alignment: .firstTextBaseline) {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
             Text("WEEK SHEET").font(titleFont).foregroundColor(.black.opacity(0.8))
             navArrow("\u{25C0}", enabled: viewModel.canStepBack()) { viewModel.stepBack() }
             Text(dateRangeText).font(smallMono).foregroundColor(labelDim)
@@ -682,13 +703,13 @@ public struct SheetView: View {
         VStack(alignment: .leading, spacing: 6) {
             Text("WEEKLY FOCUS").font(headerFont).foregroundColor(.black.opacity(0.6))
             ZStack(alignment: .leading) {
-                Text(viewModel.sheet.focus(for: viewModel.anchor).isEmpty ? " " : viewModel.sheet.focus(for: viewModel.anchor))
+                Text(viewModel.sheet.focus(for: viewModel.focusAnchor).isEmpty ? " " : viewModel.sheet.focus(for: viewModel.focusAnchor))
                     .font(bodyFont).foregroundColor(bodyText)
                     .frame(maxWidth: .infinity, minHeight: 16, alignment: .leading)
                     .opacity(viewModel.editingFocus ? 0 : 1)
                 if viewModel.editingFocus && viewModel.isEditMode {
                     InlineTextField(
-                        text: viewModel.sheet.focus(for: viewModel.anchor),
+                        text: viewModel.sheet.focus(for: viewModel.focusAnchor),
                         onCommit: { viewModel.updateFocus($0) },
                         onCancel: { viewModel.cancelEditingFocus() }
                     ).frame(maxWidth: .infinity)
