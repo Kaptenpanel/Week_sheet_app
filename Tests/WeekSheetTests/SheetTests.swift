@@ -911,12 +911,12 @@ final class SheetTests: XCTestCase {
                           "with the back-step refused, followsToday must still be true")
     }
 
-    /// Regression: removing `cancelEditing()` from the navigation actions left the reminder field
+    /// Regression: removing `cancelEditing()` from the navigation actions left the focus field
     /// open across navigation (unlike a bucket-item field, it is not torn down, since its mount
-    /// condition is just `editingReminder && isEditMode`). If `updateReminder` read `anchor` at
+    /// condition is just `editingFocus && isEditMode`). If `updateFocus` read `anchor` at
     /// commit time, text typed for one week could land on whichever week the user had since
-    /// navigated to. `startEditingReminder` must bind the destination when editing begins instead.
-    func testReminderCommitsToTheWeekItWasOpenedForEvenAfterNavigatingAway() {
+    /// navigated to. `startEditingFocus` must bind the destination when editing begins instead.
+    func testFocusCommitsToTheWeekItWasOpenedForEvenAfterNavigatingAway() {
         let tmp = scratchDirectory()
         defer { try? FileManager.default.removeItem(at: tmp) }
         let viewModel = makeViewModel(tmp)
@@ -924,10 +924,10 @@ final class SheetTests: XCTestCase {
         let monday = Sheet.parseDate("2026-09-21")!
         viewModel.anchor = monday
 
-        viewModel.startEditingReminder()
+        viewModel.startEditingFocus()
         viewModel.stepForward() // anchor moves a week later; the field stays open
 
-        viewModel.updateReminder("Typed while looking at a different week")
+        viewModel.updateFocus("Typed while looking at a different week")
 
         XCTAssertEqual(viewModel.sheet.focus(for: monday), "Typed while looking at a different week",
                        "the text must land on the week the user was editing")
@@ -1002,7 +1002,7 @@ final class SheetTests: XCTestCase {
     /// routes through `startEditing`, and `ideasPanel` is not window-gated, so that field is still
     /// mounted and still holds the user's typed text after navigation. Round 2's unconditional
     /// `editingID = nil` would unmount it and lose the rename with no recovery, the same mistake
-    /// round 1 fixed for the reminder field, reintroduced through a different vector.
+    /// round 1 fixed for the focus field, reintroduced through a different vector.
     func testNavigatingDoesNotDisturbAnInProgressIdeaRename() {
         let tmp = scratchDirectory()
         defer { try? FileManager.default.removeItem(at: tmp) }
@@ -1288,5 +1288,19 @@ final class SheetTests: XCTestCase {
 
         XCTAssertNil(viewModel.editingID, "deleting the item currently being edited must clear editingID")
         XCTAssertNil(viewModel.selectedID, "deleting the item currently being edited must clear selectedID too")
+    }
+
+    func testFocusFollowsTheAnchorsWeekNotTheWindowSpan() {
+        // A sliding window anchored on Monday reaches back into the previous week; the focus
+        // shown must be the anchor's, not slot 0's.
+        var sheet = Sheet.empty()
+        let thisMonday = Sheet.parseDate("2026-09-21")!
+        let lastMonday = Sheet.parseDate("2026-09-14")!
+        sheet.setFocus("This week", for: thisMonday)
+        sheet.setFocus("Last week", for: lastMonday)
+
+        let window = Sheet.window(anchor: thisMonday, mode: .sliding)
+        XCTAssertEqual(window[0].id, "2026-09-19", "slot 0 is in the previous week")
+        XCTAssertEqual(sheet.focus(for: thisMonday), "This week")
     }
 }

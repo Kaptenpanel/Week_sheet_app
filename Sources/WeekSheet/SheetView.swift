@@ -35,11 +35,11 @@ public final class SheetViewModel: ObservableObject {
     @Published var editingID: UUID?
     @Published var addingBucket: BucketKey?
     @Published var addingIdea = false
-    @Published var editingReminder = false
-    /// The week the focus line was opened for. `updateReminder` must not read `anchor` at commit
+    @Published var editingFocus = false
+    /// The week the focus line was opened for. `updateFocus` must not read `anchor` at commit
     /// time: navigation can move it while the field is still open, which would attribute the text
     /// to a week the user was never looking at and overwrite that week's line.
-    private var editingReminderAnchor: Date?
+    private var editingFocusAnchor: Date?
     @Published private(set) var undoState: UndoInfo?
     @Published var shakingBucket: BucketKey?
     @Published var isHorizontalMode: Bool
@@ -213,16 +213,16 @@ public final class SheetViewModel: ObservableObject {
 
     func startEditing(_ id: UUID) { editingID = id; selectedID = id }
 
-    func startEditingReminder() {
-        editingReminder = true
-        editingReminderAnchor = anchor
+    func startEditingFocus() {
+        editingFocus = true
+        editingFocusAnchor = anchor
         editingID = nil; selectedID = nil; addingBucket = nil; addingIdea = false
     }
 
-    func updateReminder(_ text: String) {
-        editingReminder = false
-        sheet.setFocus(text.trimmingCharacters(in: .whitespaces), for: editingReminderAnchor ?? anchor)
-        editingReminderAnchor = nil
+    func updateFocus(_ text: String) {
+        editingFocus = false
+        sheet.setFocus(text.trimmingCharacters(in: .whitespaces), for: editingFocusAnchor ?? anchor)
+        editingFocusAnchor = nil
         save()
     }
 
@@ -245,7 +245,7 @@ public final class SheetViewModel: ObservableObject {
 
     func cancelEditing() {
         editingID = nil; addingBucket = nil; addingIdea = false; selectedID = nil
-        editingReminder = false; editingReminderAnchor = nil
+        editingFocus = false; editingFocusAnchor = nil
     }
 
     func toggleLayoutMode() {
@@ -337,8 +337,8 @@ public final class SheetViewModel: ObservableObject {
         eventMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard let self else { return event }
             if self.editingID != nil || self.addingBucket != nil || self.addingIdea { return event }
-            // Reminder gets typed keys (incl. Space); Esc still leaves edit mode.
-            if self.editingReminder && event.keyCode != 53 { return event }
+            // The focus line gets typed keys (incl. Space); Esc still leaves edit mode.
+            if self.editingFocus && event.keyCode != 53 { return event }
             switch event.keyCode {
             case 49: self.toggleDone(); return nil
             case 51: if let id = self.selectedID { self.deleteItem(id); return nil }; return event
@@ -562,7 +562,7 @@ public struct SheetView: View {
     private var bottom: some View {
         HStack(alignment: .top, spacing: 16) {
             ideasPanel
-            reminderPanel
+            focusPanel
         }
     }
 
@@ -650,19 +650,19 @@ public struct SheetView: View {
         .onTapGesture(count: 1) { viewModel.select(idea.id) }
     }
 
-    private var reminderPanel: some View {
+    private var focusPanel: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("REMINDER !").font(headerFont).foregroundColor(.black.opacity(0.6))
+            Text("WEEKLY FOCUS").font(headerFont).foregroundColor(.black.opacity(0.6))
             ZStack(alignment: .leading) {
                 Text(viewModel.sheet.focus(for: viewModel.anchor).isEmpty ? " " : viewModel.sheet.focus(for: viewModel.anchor))
                     .font(bodyFont).foregroundColor(bodyText)
                     .frame(maxWidth: .infinity, minHeight: 16, alignment: .leading)
-                    .opacity(viewModel.editingReminder ? 0 : 1)
-                if viewModel.editingReminder && viewModel.isEditMode {
+                    .opacity(viewModel.editingFocus ? 0 : 1)
+                if viewModel.editingFocus && viewModel.isEditMode {
                     InlineTextField(
                         text: viewModel.sheet.focus(for: viewModel.anchor),
-                        onCommit: { viewModel.updateReminder($0) },
-                        onCancel: { viewModel.cancelEditing() }
+                        onCommit: { viewModel.updateFocus($0) },
+                        onCancel: { viewModel.editingFocus = false }
                     ).frame(maxWidth: .infinity)
                 }
             }
@@ -673,7 +673,7 @@ public struct SheetView: View {
         .background(greenPanel).cornerRadius(4)
         .contentShape(Rectangle())
         .onTapGesture {
-            if viewModel.isEditMode && !viewModel.editingReminder { viewModel.startEditingReminder() }
+            if viewModel.isEditMode && !viewModel.editingFocus { viewModel.startEditingFocus() }
         }
     }
 
@@ -748,7 +748,7 @@ public struct SheetView: View {
     private var sidebar: some View {
         VStack(spacing: 12) {
             ideasPanel
-            reminderPanel
+            focusPanel
         }
     }
 
