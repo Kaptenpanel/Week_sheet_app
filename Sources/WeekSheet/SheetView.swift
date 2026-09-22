@@ -247,20 +247,24 @@ public final class SheetViewModel: ObservableObject {
 
     // MARK: Navigation
 
-    /// Navigation replaces every key in the window, so any bucket-item field is unmounted — but
-    /// its flag outlives it, and the key handler skips Space/Delete/Escape while one is set, which
-    /// leaves the keyboard dead until the user clicks elsewhere. Selection goes too: it is a
-    /// visual affordance, and `deleteItem` searches every bucket, so a stale selection would let
-    /// Delete remove an item that is no longer on screen.
+    private func isIdea(_ id: UUID) -> Bool {
+        sheet.ideas.contains { $0.id == id }
+    }
+
+    /// Navigation replaces every key in the window, so a bucket-item field is unmounted — but its
+    /// flag outlives it, and the key handler skips Space/Delete/Escape while one is set, which
+    /// leaves the keyboard dead until the user clicks elsewhere. Selection goes too: `deleteItem`
+    /// searches every bucket, so a stale selection would let Delete remove an item that is no
+    /// longer on screen.
     ///
-    /// `addingIdea` and `editingReminder` are deliberately left alone. Their fields are not
-    /// window-gated, so they survive a navigation still mounted and still holding the user's typed
-    /// text — clearing them would unmount them and lose it. The key handler's guard is correct for
-    /// those two: keystrokes belong to the field that is genuinely still open.
+    /// Ideas are exempt from all of it. `ideasPanel` is not window-gated, so an idea's chip, its
+    /// selection and an in-progress rename all survive a navigation still visible -- clearing them
+    /// would unmount a live field and lose typed text, or deselect something the user can still
+    /// see. `addingIdea` and `editingReminder` are left alone for the same reason.
     private func clearWindowBoundEditingState() {
-        editingID = nil
         addingBucket = nil
-        selectedID = nil
+        if let id = editingID, !isIdea(id) { editingID = nil }
+        if let id = selectedID, !isIdea(id) { selectedID = nil }
     }
 
     func canStepBack(now: Date = Date()) -> Bool {
@@ -269,21 +273,24 @@ public final class SheetViewModel: ObservableObject {
 
     func stepBack(now: Date = Date()) {
         guard canStepBack(now: now) else { return }
+        let before = window
         anchor = Sheet.steppedAnchor(anchor, by: -1, mode: windowMode)
         followsToday = false
-        clearWindowBoundEditingState()
+        if window != before { clearWindowBoundEditingState() }
     }
 
     func stepForward() {
+        let before = window
         anchor = Sheet.steppedAnchor(anchor, by: 1, mode: windowMode)
         followsToday = false
-        clearWindowBoundEditingState()
+        if window != before { clearWindowBoundEditingState() }
     }
 
     func goToToday() {
+        let before = window
         anchor = Date()
         followsToday = true
-        clearWindowBoundEditingState()
+        if window != before { clearWindowBoundEditingState() }
     }
 
     // MARK: Key handler

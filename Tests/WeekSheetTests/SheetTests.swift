@@ -997,4 +997,60 @@ final class SheetTests: XCTestCase {
 
         XCTAssertTrue(viewModel.addingIdea, "an in-progress idea must survive navigation, not be discarded")
     }
+
+    /// Regression: `editingID` is not purely bucket-item state -- double-tapping an idea chip also
+    /// routes through `startEditing`, and `ideasPanel` is not window-gated, so that field is still
+    /// mounted and still holds the user's typed text after navigation. Round 2's unconditional
+    /// `editingID = nil` would unmount it and lose the rename with no recovery, the same mistake
+    /// round 1 fixed for the reminder field, reintroduced through a different vector.
+    func testNavigatingDoesNotDisturbAnInProgressIdeaRename() {
+        let tmp = scratchDirectory()
+        defer { try? FileManager.default.removeItem(at: tmp) }
+        let viewModel = makeViewModel(tmp)
+
+        let idea = viewModel.sheet.addIdea(text: "Rename me")
+        viewModel.startEditing(idea.id)
+
+        viewModel.stepForward()
+
+        XCTAssertEqual(viewModel.editingID, idea.id,
+                       "an in-progress idea rename must survive navigation, not be discarded")
+    }
+
+    /// Companion to the rename test above: an idea chip's selection is likewise still visible
+    /// after navigation (ideas aren't tied to a bucket), so clearing it would deselect something
+    /// the user can still see for no benefit -- unlike a bucket item's selection, nothing reachable
+    /// from the keyboard becomes unsafe by leaving it set.
+    func testNavigatingDoesNotClearASelectedIdeaChip() {
+        let tmp = scratchDirectory()
+        defer { try? FileManager.default.removeItem(at: tmp) }
+        let viewModel = makeViewModel(tmp)
+
+        let idea = viewModel.sheet.addIdea(text: "Keep me selected")
+        viewModel.select(idea.id)
+
+        viewModel.stepForward()
+
+        XCTAssertEqual(viewModel.selectedID, idea.id,
+                       "a selected idea chip is still visible after navigation and must stay selected")
+    }
+
+    /// Regression: `goToToday()` had no equivalent of `stepBack`'s "did anything actually change"
+    /// guard, so pressing it while already viewing today's week -- a redundant press, or simply
+    /// opening the app fresh -- cleared an in-progress edit that was never unmounted, because the
+    /// window never moved.
+    func testGoToTodayLeavesAnEditAloneWhenTheWindowDoesNotMove() throws {
+        let tmp = scratchDirectory()
+        defer { try? FileManager.default.removeItem(at: tmp) }
+        let viewModel = makeViewModel(tmp)
+
+        let tuesday = BucketKey("2026-09-22")!
+        let item = try viewModel.sheet.addItem(to: tuesday, text: "Mid-edit")
+        viewModel.startEditing(item.id)
+
+        viewModel.goToToday() // no prior navigation -- the window cannot have moved
+
+        XCTAssertEqual(viewModel.editingID, item.id,
+                       "goToToday must not clear an edit when the window did not actually move")
+    }
 }
