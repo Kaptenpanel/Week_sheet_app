@@ -247,6 +247,10 @@ public final class SheetViewModel: ObservableObject {
 
     // MARK: Navigation
 
+    /// True when `id` belongs to an idea rather than a day bucket. This is the discriminator for
+    /// "is this id's view still mounted after a navigation", and it is exhaustive only because
+    /// those are the only two places an `Item` can live. A third surface that is not window-gated
+    /// would need its own case here, or an in-progress edit there would be silently discarded.
     private func isIdea(_ id: UUID) -> Bool {
         sheet.ideas.contains { $0.id == id }
     }
