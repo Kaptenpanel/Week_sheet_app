@@ -2514,7 +2514,16 @@ In `Sources/WeekSheet/SheetView.swift`, rename `editingReminder` to `editingFocu
     }
 ```
 
-`cancelEditing()` clears `editingFocusAnchor` alongside `editingFocus`. Task 8's regression test for this behaviour will need its identifiers renamed too — it must keep asserting that the text lands on the week the field was opened for, not the week now on screen.
+`cancelEditing()` clears `editingFocusAnchor` alongside `editingFocus`. The panel's `onCancel` calls a narrower `cancelEditingFocus()` rather than either `cancelEditing()` or a bare `editingFocus = false`:
+
+```swift
+    func cancelEditingFocus() {
+        editingFocus = false
+        editingFocusAnchor = nil
+    }
+```
+
+`cancelEditing()` over-reaches — pressing Escape in a text field has no business clearing the selection — while the bare assignment leaks `editingFocusAnchor` until the next `startEditingFocus()` happens to overwrite it. That leak is invisible today only because of an incidental property of a neighbouring method, which is the exact reasoning that cost this plan six fix rounds across Tasks 8 and 9. Task 8's regression test for this behaviour will need its identifiers renamed too — it must keep asserting that the text lands on the week the field was opened for, not the week now on screen.
 
 ```swift
             // The focus line gets typed keys (incl. Space); Esc still leaves edit mode.
@@ -2538,7 +2547,7 @@ Replace `reminderPanel` with `focusPanel`, changing only the header string and t
                     InlineTextField(
                         text: viewModel.sheet.focus(for: viewModel.anchor),
                         onCommit: { viewModel.updateFocus($0) },
-                        onCancel: { viewModel.editingFocus = false }
+                        onCancel: { viewModel.cancelEditingFocus() }
                     ).frame(maxWidth: .infinity)
                 }
             }
