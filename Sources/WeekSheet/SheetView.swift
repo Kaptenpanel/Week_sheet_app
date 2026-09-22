@@ -111,12 +111,16 @@ public final class SheetViewModel: ObservableObject {
     }
 
     func pruneIfNeeded(now: Date = Date()) {
-        let countBefore = sheet.buckets.count
-        sheet.prune(now: now)
-        if sheet.buckets.count != countBefore {
-            dropEditingStateOutsideTheWindow()
-            save()
-        }
+        // Mutate a local copy rather than `sheet` itself: `sheet` is `@Published`, which exposes
+        // only get/set (no `_modify`), so `sheet.prune(...)` would read-modify-write and publish
+        // unconditionally — even when prune removes nothing. Assigning `sheet` only when a bucket
+        // actually went keeps the publish tied to an actual change.
+        var pruned = sheet
+        pruned.prune(now: now)
+        guard pruned.buckets.count != sheet.buckets.count else { return }
+        sheet = pruned
+        dropEditingStateOutsideTheWindow()
+        save()
     }
 
     func addItem(to key: BucketKey, text: String) {
