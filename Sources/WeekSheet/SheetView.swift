@@ -113,7 +113,10 @@ public final class SheetViewModel: ObservableObject {
     func pruneIfNeeded(now: Date = Date()) {
         let countBefore = sheet.buckets.count
         sheet.prune(now: now)
-        if sheet.buckets.count != countBefore { save() }
+        if sheet.buckets.count != countBefore {
+            dropEditingStateOutsideTheWindow()
+            save()
+        }
     }
 
     func addItem(to key: BucketKey, text: String) {
@@ -154,6 +157,7 @@ public final class SheetViewModel: ObservableObject {
         guard let item = foundItem else { return }
         try? sheet.deleteItem(id)
         if selectedID == id { selectedID = nil }
+        if editingID == id { editingID = nil }
         save()
         undoTimer?.invalidate()
         undoState = UndoInfo(item: item, bucket: foundBucket, position: foundPos)
@@ -259,33 +263,48 @@ public final class SheetViewModel: ObservableObject {
 
     // MARK: Navigation
 
-    /// The bucket holding `id`, or nil if it is not in any bucket — an idea, or an id that no
-    /// longer exists. Anything without a bucket is not window-bound, so it survives navigation.
-    ///
-    /// A deleted id is therefore never cleared by `dropEditingStateOutsideTheWindow()` -- unlike
-    /// the old code, which cleared any non-idea id unconditionally. That is harmless only because
-    /// no UI path can currently delete the id being edited: the key handler blocks Delete while
-    /// `editingID` is set, and an idea's delete affordance (its `\u{00D7}`) is replaced by its
-    /// edit field while editing. Those are properties of the view today, not something this
-    /// function guarantees -- a future delete affordance reachable during an edit would need its
-    /// own handling, not rely on this comment alone.
+    /// The bucket holding `id`, or nil if it is not in any bucket — an idea, a pruned or deleted
+    /// item, or an id that never existed. `isVisible` is what distinguishes those; this is just
+    /// the lookup it and `deleteItem`/`updateText`/etc. share.
     private func bucketHolding(_ id: UUID) -> BucketKey? {
         sheet.buckets.first { $0.value.contains { $0.id == id } }?.key
     }
 
-    /// Drops editing state whose bucket is no longer on screen. A field the window has scrolled
-    /// away from is already unmounted, and its flag outliving it dead-zones the key handler;
-    /// a selection the user can no longer see would still let Delete reach the item, because
-    /// `deleteItem` searches every bucket rather than the window.
+    /// Whether `id`'s view is currently on screen. The ideas panel is never window-gated, so an
+    /// idea is always visible; a bucket item is visible only while its bucket is in the window;
+    /// anything else — pruned, deleted, never existed — is not on screen at all.
     ///
-    /// Membership in the current window is the fact, not a stand-in for it: nothing that is still
-    /// visible is ever cleared, so this is correct in both modes, correct when a mode switch
-    /// changes the window's shape without moving the anchor, and a no-op when nothing moved.
+    /// This used to be inferred from `bucketHolding(id) == nil`, which conflated "is an idea"
+    /// (still visible, must not be cleared) with "was pruned or deleted" (not visible, should be
+    /// cleared) -- both read as "not in a bucket". A deleted id doesn't currently reach
+    /// `dropEditingStateOutsideTheWindow()` with `editingID`/`selectedID` still pointing at it
+    /// (the key handler blocks Delete while `editingID` is set, and an idea's `\u{00D7}` is
+    /// replaced by its edit field while editing), so that conflation had never been observed to
+    /// matter -- until pruning showed it could remove a bucket the window itself never noticed
+    /// moving. Checking visibility directly means the next drop clears a dangling id regardless of
+    /// which door it came in through, rather than depending on which view affordances currently
+    /// exist.
+    private func isVisible(_ id: UUID) -> Bool {
+        if sheet.ideas.contains(where: { $0.id == id }) { return true }
+        guard let key = bucketHolding(id) else { return false }
+        return Set(window).contains(key)
+    }
+
+    /// Drops editing state whose view is no longer on screen. A field the window scrolled away
+    /// from, or whose item has been pruned or deleted, is already unmounted -- but its flag
+    /// outliving it dead-zones the key handler, and a stale selection would still let Delete reach
+    /// the item, because `deleteItem` searches every bucket rather than the window.
+    ///
+    /// Visibility is the fact, not a stand-in for it: nothing still on screen is ever cleared, so
+    /// this is correct in both modes, correct across a mode switch, a midnight rollover, or a
+    /// prune, and a no-op when nothing changed. `addingBucket` keeps the plain membership test --
+    /// it holds a bucket key rather than an item id, and an empty-but-windowed bucket is still a
+    /// valid place to be typing.
     private func dropEditingStateOutsideTheWindow() {
         let visible = Set(window)
         if let key = addingBucket, !visible.contains(key) { addingBucket = nil }
-        if let id = editingID, let key = bucketHolding(id), !visible.contains(key) { editingID = nil }
-        if let id = selectedID, let key = bucketHolding(id), !visible.contains(key) { selectedID = nil }
+        if let id = editingID, !isVisible(id) { editingID = nil }
+        if let id = selectedID, !isVisible(id) { selectedID = nil }
     }
 
     func canStepBack(now: Date = Date()) -> Bool {

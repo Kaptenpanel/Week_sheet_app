@@ -1210,4 +1210,83 @@ final class SheetTests: XCTestCase {
         XCTAssertEqual(viewModel.selectedID, item.id,
                        "a midnight rollover must not clear a selection whose bucket is still in the window")
     }
+
+    // MARK: - Prune vs. a parked window
+
+    /// Regression: `prune` removes whole buckets, and `pruneIfNeeded` runs on every tick
+    /// regardless of `followsToday`. With `followsToday == false` -- the user navigated and
+    /// parked -- the window is frozen while `now` keeps advancing, so nothing about the window
+    /// array itself changes when the retention horizon finally passes the parked bucket. The old
+    /// `bucketHolding(id) == nil` check conflated "pruned" with "is an idea" (both read as "not in
+    /// a bucket"), so a pruned item's dangling id was never cleared. `isVisible` checks the fact
+    /// -- still in a bucket, and that bucket still in the window -- rather than that proxy.
+    func testPruningAParkedWindowsBucketDropsTheSelectionInIt() throws {
+        let tmp = scratchDirectory()
+        defer { try? FileManager.default.removeItem(at: tmp) }
+        let viewModel = makeViewModel(tmp)
+
+        viewModel.stepForward() // any step sets followsToday = false, on any real weekday or mode
+        viewModel.anchor = Sheet.parseDate("2026-01-05")! // frozen here; followsToday stays false
+
+        let bucket = viewModel.window[0]
+        let item = try viewModel.sheet.addItem(to: bucket, text: "Parked and about to be pruned")
+        viewModel.select(item.id)
+
+        let windowBefore = viewModel.window
+        let farFuture = Sheet.parseDate("2026-06-01")! // well past the 7-day retention horizon
+        viewModel.tick(now: farFuture)
+
+        XCTAssertEqual(viewModel.window, windowBefore,
+                       "sanity: a parked window must not itself move on tick")
+        XCTAssertNil(viewModel.sheet.buckets[bucket], "sanity: the bucket must actually have been pruned")
+        XCTAssertNil(viewModel.selectedID,
+                     "a selection whose bucket was pruned out from under a parked window must be cleared")
+    }
+
+    /// Companion to the test above: this is the case that made `bucketHolding(id) == nil` look
+    /// like a safe stand-in for "not visible" in the first place, so it needs pinning under the
+    /// new check too -- pruning an unrelated bucket must not disturb a selected idea, which is
+    /// never window-bound and so always visible.
+    func testPruningDoesNotDisturbASelectedIdea() throws {
+        let tmp = scratchDirectory()
+        defer { try? FileManager.default.removeItem(at: tmp) }
+        let viewModel = makeViewModel(tmp)
+
+        viewModel.stepForward()
+        viewModel.anchor = Sheet.parseDate("2026-01-05")!
+
+        let bucket = viewModel.window[0]
+        _ = try viewModel.sheet.addItem(to: bucket, text: "Unrelated to the idea, pruned anyway")
+        let idea = viewModel.sheet.addIdea(text: "Still visible no matter what prunes")
+        viewModel.select(idea.id)
+
+        let farFuture = Sheet.parseDate("2026-06-01")!
+        viewModel.tick(now: farFuture)
+
+        XCTAssertNil(viewModel.sheet.buckets[bucket], "sanity: the unrelated bucket must actually have been pruned")
+        XCTAssertEqual(viewModel.selectedID, idea.id,
+                       "pruning a bucket must not disturb a selected idea, which is never window-bound")
+    }
+
+    /// Found while auditing every way an id's view can stop being on screen for the two tests
+    /// above: `deleteItem` cleared `selectedID` when it matched but left a matching `editingID`
+    /// dangling. Unreachable via the current UI (the key handler blocks Delete while `editingID`
+    /// is set, and an idea's delete affordance is replaced by its own edit field while editing),
+    /// but nothing in `deleteItem` itself enforces that -- and unlike a merely-pruned id, this one
+    /// can't wait for the next drop to notice: a dangling `editingID` dead-zones the key handler
+    /// the instant it happens, not just once some later event reveals it.
+    func testDeletingTheItemCurrentlyBeingEditedClearsEditingIDToo() throws {
+        let tmp = scratchDirectory()
+        defer { try? FileManager.default.removeItem(at: tmp) }
+        let viewModel = makeViewModel(tmp)
+
+        let bucket = viewModel.window[0]
+        let item = try viewModel.sheet.addItem(to: bucket, text: "Being edited when deleted")
+        viewModel.startEditing(item.id)
+
+        viewModel.deleteItem(item.id)
+
+        XCTAssertNil(viewModel.editingID, "deleting the item currently being edited must clear editingID")
+        XCTAssertNil(viewModel.selectedID, "deleting the item currently being edited must clear selectedID too")
+    }
 }
