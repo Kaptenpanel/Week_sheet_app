@@ -100,12 +100,16 @@ Tests/
     SheetTests.swift          # Model logic tests
     FileStoreTests.swift      # Persistence, migration + quarantine tests
 docs/
-    weeksheet-spec-v1.md      # Full specification
+    weeksheet-spec-v1.md      # Original v1 specification
+    superpowers/specs/        # Sliding-week design doc — supersedes v1 where they disagree
+    superpowers/plans/        # Implementation plan for the sliding-week rewrite
 ```
 
 ## Data Storage
 
 Week data is saved as JSON to `~/Library/Application Support/WeekSheet/week.json`. There's no reset and no history archive — day items are simply deleted once they're more than 7 days past their bucket's last day (a weekend bucket is judged by Sunday, so both its days get the full seven). If `week.json` can't be read — corrupted, or in a shape Week Sheet doesn't recognize — it's renamed to `week-unreadable-<date>.json` in the same folder rather than being overwritten, and the app starts fresh with an empty sheet; your original file is left in place to recover by hand.
+
+A `week.json` from before the sliding-week rewrite is converted to the new format once, on first launch. Because that conversion is irreversible and drops the old Notes text, the original is first copied to `week-legacy-<date>.json` alongside it.
 
 ## License
 
