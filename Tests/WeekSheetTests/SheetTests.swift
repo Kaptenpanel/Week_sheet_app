@@ -1161,4 +1161,53 @@ final class SheetTests: XCTestCase {
         XCTAssertNil(viewModel.selectedID,
                      "the mode switch must drop selection for a bucket its own shape change removed")
     }
+
+    /// Regression: `tick()` moves `anchor` directly when `followsToday` is true and the day rolls
+    /// over, but never called the clearing helper -- neither before this task nor after. In week
+    /// mode that only matters on a Sunday-to-Monday roll; in sliding mode the window can move
+    /// every single night, so a selection left over from the evening before would dead-zone the
+    /// key handler or let Delete reach an item no longer on screen. `tomorrow` is derived from the
+    /// next bucket rather than "+1 calendar day" so this does not depend on which real weekday the
+    /// suite runs on (a raw +1 day can land in the same bucket as today, across the Saturday/Sunday
+    /// fold).
+    func testTickAtMidnightDropsAStaleSelectionThatSlidOffTheWindow() throws {
+        let tmp = scratchDirectory()
+        defer { try? FileManager.default.removeItem(at: tmp) }
+        let viewModel = makeViewModel(tmp)
+        viewModel.windowMode = .sliding
+        // followsToday is true by default -- the view model has never navigated.
+
+        let leavingBucket = viewModel.window[0] // slot 0: one bucket behind today's own.
+        let item = try viewModel.sheet.addItem(to: leavingBucket, text: "Selected the night before")
+        viewModel.select(item.id)
+
+        let tomorrow = BucketKey.containing(Date()).stepped(by: 1).firstDate
+        viewModel.tick(now: tomorrow)
+
+        XCTAssertFalse(viewModel.window.contains(leavingBucket),
+                       "sanity: a day's rollover must drop slot 0's bucket in sliding mode")
+        XCTAssertNil(viewModel.selectedID,
+                     "a midnight rollover that follows today must drop a selection whose bucket left the window")
+    }
+
+    /// Mirror of the test above: a midnight rollover must not clear a selection whose bucket is
+    /// still on screen the next day.
+    func testTickAtMidnightKeepsAStillVisibleSelection() throws {
+        let tmp = scratchDirectory()
+        defer { try? FileManager.default.removeItem(at: tmp) }
+        let viewModel = makeViewModel(tmp)
+        viewModel.windowMode = .sliding
+
+        let stayingBucket = viewModel.window[3] // slot 3: still three buckets ahead after one step.
+        let item = try viewModel.sheet.addItem(to: stayingBucket, text: "Still on screen the next day")
+        viewModel.select(item.id)
+
+        let tomorrow = BucketKey.containing(Date()).stepped(by: 1).firstDate
+        viewModel.tick(now: tomorrow)
+
+        XCTAssertTrue(viewModel.window.contains(stayingBucket),
+                      "sanity: slot 3's bucket must still be in view after one day's rollover")
+        XCTAssertEqual(viewModel.selectedID, item.id,
+                       "a midnight rollover must not clear a selection whose bucket is still in the window")
+    }
 }

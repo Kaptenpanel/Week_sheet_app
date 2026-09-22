@@ -102,7 +102,10 @@ public final class SheetViewModel: ObservableObject {
         let start = Calendar.current.startOfDay(for: now)
         if start != today {
             today = start
-            if followsToday { anchor = now }
+            if followsToday {
+                anchor = now
+                dropEditingStateOutsideTheWindow()
+            }
         }
         pruneIfNeeded(now: now)
     }
@@ -258,6 +261,14 @@ public final class SheetViewModel: ObservableObject {
 
     /// The bucket holding `id`, or nil if it is not in any bucket — an idea, or an id that no
     /// longer exists. Anything without a bucket is not window-bound, so it survives navigation.
+    ///
+    /// A deleted id is therefore never cleared by `dropEditingStateOutsideTheWindow()` -- unlike
+    /// the old code, which cleared any non-idea id unconditionally. That is harmless only because
+    /// no UI path can currently delete the id being edited: the key handler blocks Delete while
+    /// `editingID` is set, and an idea's delete affordance (its `\u{00D7}`) is replaced by its
+    /// edit field while editing. Those are properties of the view today, not something this
+    /// function guarantees -- a future delete affordance reachable during an edit would need its
+    /// own handling, not rely on this comment alone.
     private func bucketHolding(_ id: UUID) -> BucketKey? {
         sheet.buckets.first { $0.value.contains { $0.id == id } }?.key
     }
